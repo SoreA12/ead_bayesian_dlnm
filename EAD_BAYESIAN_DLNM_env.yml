@@ -1,0 +1,13 @@
+name: EAD_BAYESIAN_DLNM
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - pymc>=6
+  - arviz>1.0.0
+  - jupyter
+  - ipykernel
+  - numpy
+  - pandas
+  - matplotlib
+  - pygam
