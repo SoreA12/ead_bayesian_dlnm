@@ -50,3 +50,9 @@ rsconnect/
 
 # macbook storage
 .DS_Store
+
+# large data files
+data/interim
+
+# many figures
+results

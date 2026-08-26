@@ -1,0 +1,222 @@
+Metric Name,Keep,Which Locations,Which Rule
+Referrals Received Yesterday,Yes,All,
+Capacity (Available Slots Today),Yes,All,
+P2 NCtR,Yes,"Sirona - South Gloucestershire, Sirona - North Somerset",
+NBT P1 NCtR Beddays,No,,3
+BRI P2 NCtR Beddays,No,,2
+P1 Slots Booked Today,Yes,All,
+P1 Slots Used Yesterday,Yes,All,
+P1 (Available) Slots Not Utilised,No,,2
+P2 Beds Occupied,No,,"2, 3"
+P2 (Available) Beds Not Utilised,No,,2
+P3 Beds Occupied,No,,3
+P3 (Available) Beds Not Utilised,No,,"2, 3"
+P1 Acute Waiting List (Booked + Unbooked),No,,1
+P1 Referrals Yesterday,Yes,All,
+P2 Acute Waiting List (Booked + Unbooked),Yes,All,
+P2 Patients Predicted for Admission Today,Yes,All,
+P3 Acute Waiting List (Booked + Unbooked),No,,"2, 3"
+P3 Referrals Yesterday,Yes,All,
+BRI P1 NCtR Beddays,No,,"1, 3"
+P1 NCtR,No,,3
+NBT P2 NCtR Beddays,No,,"1, 3"
+NBT P3 NCtR Beddays,No,,
+Unallocated Red Nursing Schedules,Yes,All,
+Red Nursing schedules,No,,1
+Unallocated Red Nursing Schedules (%),No,,4
+BRI NCtR Beddays,Yes,All,
+BRI NCtR Patients,Yes,All,
+BRI P3 NCtR Beddays,No,,"2, 3"
+BRI P1 NCtR Patients,Yes,All,
+BRI P2 NCtR Patients,Yes,All,
+BRI P3 NCtR Patients,Yes,All,
+BRI NCtR >= 65 years old,Yes,All,
+WGH NCtR Beddays,No,,"1, 3"
+WGH NCtR Patients,Yes,All,
+WGH P1 NCtR Beddays,Yes,All,
+WGH P2 NCtR Beddays,No,,2
+WGH P3 NCtR Beddays,No,,"1, 2; 3"
+WGH P1 NCtR Patients,Yes,All,
+WGH P2 NCtR Patients,Yes,All,
+WGH P3 NCtR Patients,Yes,All,
+WGH NCtR >= 65 years old,Yes,All,
+DOS Status at 10am,Yes,All,
+P1 Caseload,Yes,All,
+P2 Referrals Yesterday,Yes,All,
+P2 Admissions Yesterday,Yes,All,
+P3 Admissions Yesterday,Yes,All,
+Intensive Caseload,No,,"1, 2"
+Bed Occupancy Adult,Yes,All,
+Bed Occupancy PICU,Yes,All,
+Urgent Referrals,Yes,All,
+OOT Internal Placements,No,,"1, 2"
+"Of neonatal critical care beds occupied, how many are level 3?",Yes,All,
+% of beds occupied by patients with NCtR,Yes,Bristol Royal Infirmary,
+% of open beds that are escalation beds,Yes,All,
+% of patients spending >12 hours in ED,Yes,All,
+4hr Breach Performance,Yes,All,
+A&E Discharges in Last Hour,,,
+A&E attends - paediatrics,Yes,"BRI, NBT",
+Aggregated NHSE OPEL Score,No,,"1, 3"
+Ambulance Handovers 15mins (Last Hour),Yes,All,
+Ambulance Handovers 15mins (Since Midnight),Yes,All,
+Ambulance Handovers 30 mins (Last Hour),Yes,All,
+Ambulance Handovers 30mins (Since Midnight),Yes,All,
+Ambulance Handovers 60 mins (Last Hour),Yes,All,
+Ambulance Handovers 60mins (Since Midnight),Yes,All,
+Ambulance Queue,No,,1
+Ambulances Conveyed to Hospital (Last Hour),Yes,"Bristol Royal Hospital for Children, Weston",
+Ambulances Conveyed to Hospital (Since Midnight),Yes,All,
+Ambulances En Route to Hospital,Yes,All,
+Ambulances En Route to Hospitals,No,,4
+Automated OPEL,No,,1
+Average Time to Assessment,Yes,All,
+Average Time to Triage,Yes,All,
+Beds occupied by long-stay patients (21+ days),No,,2
+Closed TOC Docs to all pathways,Yes,All,
+Cohorting & Reverse Queue,No,,"1, 3"
+Critical Care beds - Adult critical care beds occupied,Yes,WGH,
+Delayed TOC Docs to all Pathways,Yes,"Sirona - SG, Sirona - NS",
+"DtA P1 BOOKED AND UN-BOOKED Waiting for capacity, medically fit and NOT in an acute",,,
+"DtA P1 BOOKED AND UN-BOOKED Waiting for capacity, medically fit and ready to leave ACUTE",Yes,All,
+"DtA P1 BOOKED Waiting for capacity, medically fit and NOT in an acute",Yes,All,
+"DtA P1 BOOKED Waiting for capacity, medically fit and ready to leave ACUTE",Yes,All,
+DtA P1 Referrals Received,Yes,All,
+DtA P1 Slots Booked,Yes,All,
+"DtA P1 TOTAL (BOOKED AND UNBOOKED) Waiting for capacity and medically fit, and in any setting (acute and non-acute)",Yes,,
+"DtA P1 UNBOOKED Waiting for capacity, medically fit and NOT in an acute",No,,2
+"DtA P1 UNBOOKED Waiting for capacity, medically fit and ready to leave acute",Yes,"Sirona - SG, Sirona - NS",
+"DtA P2 BOOKED Waiting for capacity, medically fit and ready to leave ACUTE",Yes,All,
+DtA P2 Beds Occupied,No,,2
+DtA P2 Referrals Received,Yes,All,
+"DtA P2 TOTAL BOOKED AND UN-BOOKED Waiting for capacity, medically fit and ready to leave ACUTE",Yes,"Sirona - SG, Sirona - NS",
+"DtA P2 UNBOOKED Waiting for capacity, medically fit and ready to leave acute",Yes,"Sirona - SG, Sirona - NS",
+"DtA P3 BOOKED AND UN-BOOKED Waiting for capacity, medically fit and ready to leave ACUTE",Yes,"Sirona - SG, Sirona - NS",
+"DtA P3 BOOKED Waiting for capacity, medically fit and ready to leave ACUTE",Yes,All,
+DtA P3 Beds Occupied,No,,2
+DtA P3 TOTAL (BOOKED AND UNBOOKED) Waiting for capacity and medically fit and in any setting (acute and transitional bed),Yes,"Sirona - SG, Sirona - NS",
+"DtA P3 UNBOOKED Waiting for capacity, medically fit and ready to leave acute",Yes,"Sirona - SG, Sirona - NS",
+ED all-type 4-hour performance,Yes,All,
+ED all-type attendance variation,Yes,All,
+Escalation beds open,Yes,All,
+G&A Bed occupancy,No,,2
+"G&A beds, core stock open",No,,"2, 3"
+Handover Time Lost Since Midnight (hh:mm),Yes,All,
+Handover to Clear 15mins (Last Hour),No,,"1, 3"
+Handover to Clear 15mins (Since Midnight),No,,"1, 3"
+Handover to Clear 30mins (Last Hour),No,,2
+Handover to Clear 30mins (Since Midnight),No,,2
+Handover to Clear 60mins (Since Midnight),No,,2
+Majors and resuscitation occupancy (adult),Yes,All,
+Majors patient count,Yes,"North Bristol NHS Trust, Bristol Royal Hospital for Children",
+Median time to treatment since midnight,Yes,All,
+Minors patient count,Yes,"North Bristol NHS Trust, Bristol Royal Hospital for Children",
+NBT Complex Discharges,Yes,All,
+NBT NCtR >= 65 years old,Yes,All,
+NBT NCtR Beddays,Yes,All,
+NBT NCtR Patients,Yes,All,
+NBT P0 Discharges,Yes,All,
+NBT P1 NCtR Patients,No,,3
+NBT P2 NCtR Patients,No,,3
+NBT P3 NCtR Patients,No,,3
+New Arrivals in Last Hour,Yes,All,
+No of referrals received for DtA P3,Yes,All,
+No. of DTAs,Yes,All,
+No. of DTAs (> 8hrs),Yes,All,
+Number of Admissions,Yes,All,
+Number of Discharges,Yes,All,
+OPEL,Yes,All,
+Patients Admitted to DtA P2 - YESTERDAY'S DATA,Yes,All,
+Patients Admitted to DtA P3 - YESTERDAY'S DATA,Yes,All,
+Patients in A&E,Yes,All,
+Resuscitation Capacity,Yes,All,
+Total Breaches Since Midnight,Yes,All,
+(SWASFT) Number of HCP Incidents,No,,3
+(SWASFT) Number of NHS 111 Incidents,Yes,All,
+(Severnside) CAS Referred to ED,Yes,All,
+(Severnside) Calls Answered,Yes,All,
+(Severnside) Calls Answered Within 60 Seconds,No,,2
+(Severnside) Calls Received,Yes,All,
+(Severnside) Calls Triaged,No,,1
+(Severnside) HCP Calls Answered,Yes,All,
+(Severnside) Referred to 999 - C1 Ambulances,No,,"1, 3"
+(Severnside) Referred to 999 - C2 Ambulances,No,,"1, 3"
+(Severnside) Referred to 999 - C3 Ambulances,No,,2
+(Severnside) Referred to 999 - C4 Ambulances,No,,"1, 3"
+(Severnside) Referred to ED,Yes,All,
+Adult critical care beds occupied,Yes,All,
+Answered in 60 seconds Since Midnight that Received,No,,1
+Answered in 60 seconds Since Midnight that Received (%),No,,1
+Answered in 60 seconds in Last 15 mins,Yes,All,
+Answered in 60 seconds in Last 15 mins (%),No,,1
+Average Handling Time Since Midnight that Received,No,,2
+Average Handling Time in Last 15 mins,No,,2
+Average Speed to Answer Since Midnight that Received,No,,2
+Average Speed to Answer in Last 15 mins,No,,1
+BRI Complex Discharges,Yes,All,
+BRI P0 Discharges,Yes,All,
+Calls Abandoned After Threshold Since Midnight that Received,No,,"1, 2"
+Calls Abandoned After Threshold Since Midnight that Received (%),No,,"1, 2"
+Calls Abandoned After Threshold in Last 15 mins,No,,"1, 2"
+Calls Abandoned After Threshold in Last 15 mins (%),No,,"1, 2"
+Calls Abandoned Before Threshold Since Midnight that Received,No,,"1, 2"
+Calls Abandoned Before Threshold in Last 15 mins,No,,"1, 2"
+Calls Answered Since Midnight that Received,Yes,All,
+Calls Answered in Last 15 mins,Yes,All,
+Calls Offered Since Midnight that Received,Yes,All,
+Calls Offered in Last 15 mins,Yes,All,
+Category 1 - BNSSG 90th Response (Last Hour),Yes,All,
+Category 1 - BNSSG Mean Response (Since Midnight),Yes,All,
+Category 2 - BNSSG 90th Response (Last Hour),No,,1
+Category 2 - BNSSG Mean Response (Since Midnight),No,,1
+Category 3 - BNSSG 90th Response (Last Hour),No,,1
+Category 3 - BNSSG Mean Response (Since Midnight),No,,1
+Category 4 - BNSSG 90th Response (Last Hour),Yes,All,
+Category 4 - BNSSG Mean Response (Since Midnight),Yes,All,
+Clinical Escalation Level (BrisDoc),Yes,All,
+Critical Care beds - Neonatal intensive care cots occupied,Yes,All,
+Critical Care beds - Paediatric intensive care beds occupied,Yes,All,
+Deficit of Discharges at 1100 - With Definite Discharges Known,Yes,All,
+Deficit of Discharges at 1100 - With Definite and Potential Discharges Identified,Yes,All,
+DtA Community P2 Bed Occupied,No,,"1, 3"
+DtA P1 slots booked,Yes,All,
+DtA P2 referrals received,Yes,All,
+DtA P3 beds occupied,No,,"1, 3"
+DtA SBRU P2 rehabilitation beds occupied,No,,"1, 3"
+DtA SBRU P2 stroke beds occupied,No,,"1, 3"
+IUC Advice Longest Wait (1hr Call Back),Yes,All,
+IUC Advice Longest Wait (2hr Call Back),Yes,All,
+IUC Advice Longest Wait (6hr Call Back),Yes,All,
+IUC Advice Longest Wait (HCP Call Back),No,,2
+Longest Wait Since Midnight that Received,No,,1
+Longest Wait in Last 15 mins,No,,1
+Mason Section 136 Beds Available (Capacity 4),Yes,All,
+Number of Active Calls on the 999 Call Stack,Yes,All,
+Number of Cardiac Outliers,Yes,All,
+Number of Cases on IUC CAS Queue,Yes,All,
+Number of GP expected diverts to ED,Yes,All,
+Number of Home Visits,Yes,All,
+Number of Medical Outliers,Yes,All,
+Number of Outliers (excluding paediatrics) at 1000,Yes,All,
+Number of Surgical Outliers,Yes,All,
+Number of Treatment Centre Appointments,Yes,All,
+Number of Waiting Calls on the 999 Call Stack,No,,1
+Number of critical care beds available at 8am (today),Yes,All,
+Number of empty beds on assessment units 8am (today),No,,3
+Number of empty beds on assessment units 8am (today) - Medicine,No,,3
+Number of empty beds on assessment units 8am (today) - Surgery,Yes,All,
+Of neonatal critical care beds occupied how many are level 3?,Yes,All,
+Proportion of Calls Since Midnight that Received a Hear Treat,Yes,All,
+Proportion of Calls Since Midnight that Received a See Convey,Yes,All,
+Proportion of Calls Since Midnight that Received a See Treat,Yes,All,
+Resuscitation Capacity at 1000,Yes,All,
+Sirona BNSSG % Staffing Reduction,No,,3
+Sirona ICE Bristol Locality % Staffing Reduction,No,,3
+Sirona N&W Bristol Locality % Staffing Reduction,No,,3
+Sirona SASS % Staffing Reduction,No,,3
+Sirona South Bristol Locality % Staffing Reduction,Yes,All,
+Sirona South Glos Locality % Staffing Reduction,Yes,All,
+Sirona Weston & Worle Locality % Staffing Reduction,Yes,All,
+Sirona Woodspring Locality % Staffing Reduction,No,,3
+WGH Complex Discharges,Yes,All,
+WGH P0 Discharges,Yes,All,
