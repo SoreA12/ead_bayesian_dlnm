@@ -53,6 +53,7 @@ rsconnect/
 
 # large data files
 data/interim
+data/processed/modeldat.csv
 
 # many figures
 results
