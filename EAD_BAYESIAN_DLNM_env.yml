@@ -1,6 +1,9 @@
 name: EAD_BAYESIAN_DLNM
+
 channels:
   - conda-forge
+  - nodefaults
+
 dependencies:
   - python=3.13
   - pymc>=6
@@ -11,3 +14,7 @@ dependencies:
   - pandas
   - matplotlib
   - pygam
+  - patsy
+  - pyprojroot
+  - nutpie
+  - netcdf4

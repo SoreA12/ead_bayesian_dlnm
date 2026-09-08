@@ -1,59 +1,84 @@
-library(tidyverse) 
-library(janitor)   
-library(skimr)
-library(lubridate)
-library(ggcorrplot)
-library(imputeTS)
-library(reshape2)
-library(ggtext)
-library(zoo)
-library(car)
-library(mgcv)
-library(patchwork)
-library(gplots)
-library(moments)
-library(ggsankey)
-library(usdm)
-library(ggplot2)
-library(ranger)
-library(data.table)
+# ============================================================
+# Install/load required packages
+# ============================================================
+
+packages <- c(
+  "here",
+  "tidyverse",
+  "imputeTS",
+  "mgcv",
+  "data.table",
+  "ranger"
+)
+
+installed <- rownames(installed.packages())
+
+for (pkg in packages) {
+  if (!(pkg %in% installed)) {
+    install.packages(pkg, repos = "https://cloud.r-project.org")
+  }
+}
+
+# Load packages
 library(here)
+library(tidyverse)
+library(imputeTS)
+library(mgcv)
+library(data.table)
+library(ranger)
+
+# ============================================================
+# Script settings
+# ============================================================
+
+n_keep <- 10
+train_cutoff <- as.Date("2025-09-30")
+
+# ============================================================
+# Unzip training and validation datasets
+# ============================================================
 
 unzip(here("data", "raw", "turingAI_forecasting_challenge_dataset.csv.zip"),
       exdir = here("data", "interim"))
-
 unzip(here("data", "raw", "turingAI_forecasting_challenge_validation_dataset.zip"),
       exdir = here("data", "interim"))
 
-file_path <- here("data", "interim", "turingAI_forecasting_challenge_dataset.csv")
-file_path_2 <- here("data", "interim", "turingAI_forecasting_challenge_validation_dataset.csv")
-file_path_3 <- here("data", "raw", "covariate_selection.csv")
+# fetch data
+fp_train <- here("data", "interim", "turingAI_forecasting_challenge_dataset.csv")
+fp_val <- here("data", "interim", "turingAI_forecasting_challenge_validation_dataset.csv")
+fp_covselect <- here("data", "raw", "covariate_selection.csv")
 
-train_cutoff <- as.Date("2025-09-30")
-
-dat_train <- read_csv(file_path)
+dat_train <- read_csv(fp_train)
 dat_train <- dat_train[dat_train$dt <= train_cutoff, ]
-dat_val <- read_csv(file_path_2)
-metric_selection <- read_csv(file_path_3)
+dat_val <- read_csv(fp_val)
+metric_selection <- read_csv(fp_covselect)
 
+# ============================================================
+# First cleaning
+# ============================================================
+
+# replace cov values of -9999 with Nan
 dat1 <- rbind(dat_train, dat_val)
-
 dat1 <- dat1 %>%
   mutate(across(where(is.numeric), ~na_if(., -9999)))
 
-# Standardize Dates and Times
+# standardize Dates and Times
 dat2 <- dat1 %>%
   mutate(dt = as.POSIXct(dt, tz = "UTC"), date_only = as.Date(dt),
     # If recorded after midday, attribute to the next day's operational cycle
     operational_day = if_else(format(dt, "%H:%M:%S") > "12:00:00", date_only + 1, date_only))
 
-# Since some days contain shorter time intervals, we average all to 1 day
+# average all timesteps to 1 day at noon
 dat3 <- dat2 %>%
   group_by(operational_day, metric_name, coverage) %>%
   summarise(
     daily_value = mean(value, na.rm = TRUE), 
     .groups = "drop"
   )
+
+# ============================================================
+# What goes on here?
+# ============================================================
 
 metric_selection <- metric_selection %>% mutate(across(everything(), str_trim))
 
@@ -92,15 +117,15 @@ registry_names <- unique(final_unique)
 # This creates the wide-format table where each column is a unique metric
 dat4 <- dat3 %>%
   
-  # Combine Site and Metric name to create unique column headers
-  mutate(column_label = paste0(coverage, "_", metric_name)) %>%
-  select(operational_day, column_label, daily_value) %>%
-  pivot_wider(names_from = column_label, values_from = daily_value)
+# Combine Site and Metric name to create unique column headers
+mutate(column_label = paste0(coverage, "_", metric_name)) %>%
+select(operational_day, column_label, daily_value) %>%
+pivot_wider(names_from = column_label, values_from = daily_value)
 
 # Ensure the dates are in chronological order
 dat4 <- dat4 %>% arrange(operational_day)
 
-# Renaming outcome metric back to estimated_avoidable_deaths
+# renaming outcome metric back to estimated_avoidable_deaths
 dat4 <- dat4 %>%
   rename(estimated_avoidable_deaths = "NHS Bristol, North Somerset, South Gloucestershire Integrated Care Board_estimated_avoidable_deaths")
 
@@ -111,6 +136,10 @@ to_registry <- function(col_names) {
     if (length(hit) >= 1) hit[which.max(nchar(hit))] else nm 
   }, character(1), USE.NAMES = FALSE)
 }
+
+# ============================================================
+# Gap length
+# ============================================================
 
 find_longest_NA_string <- function(x) {
   
@@ -162,9 +191,14 @@ kept_cols_cov  <- setdiff(names(dat5), c("operational_day", "estimated_avoidable
 registry_dropped_raw <- unique(to_registry(dropped_column_names))
 registry_kept        <- unique(to_registry(kept_cols_cov))
 
-# A covariate is only *truly* dropped if NONE of its columns survived:
+# a covariate is only *truly* dropped if NONE of its columns survived:
 registry_truly_dropped <- setdiff(registry_dropped_raw, registry_kept)
 
+# ============================================================
+# Interpolation of NA
+# ============================================================
+
+# helper function to linearily interpolate interior/training NA
 interpolate_non_leading <- function(x) {
   first_valid <- which(!is.na(x))[1]
   x_interp <- na_interpolation(x, option = "linear")
@@ -173,7 +207,8 @@ interpolate_non_leading <- function(x) {
   }
   return(x_interp)
 }
-# Separate imputation logic
+
+# impute NAs
 dat6 <- dat5 %>%
   # Linear interpolation on interior/trailing NAs only; leading NAs preserved
   mutate(across(where(is.numeric) & !estimated_avoidable_deaths, 
@@ -181,6 +216,10 @@ dat6 <- dat5 %>%
   # Handle target variable
   mutate(estimated_avoidable_deaths = na_locf(estimated_avoidable_deaths, na_remaining = "rev")) %>%
   mutate(estimated_avoidable_deaths = pmax(0, estimated_avoidable_deaths))
+
+# ============================================================
+# GAM outlier removal (1)
+# ============================================================
 
 remove_gam_outliers_wide <- function(dat, col_name) {
   
@@ -224,7 +263,7 @@ remove_gam_outliers_wide <- function(dat, col_name) {
   train <- dat$operational_day <= train_cutoff
   
   x[train]  <- na_interpolation(x[train], option = "linear")
-  x <- na.locf(x, na.rm = FALSE)
+  x <- na.locf(x)
   
   # na_interpolation() extrapolates leading NAs to the first valid value;
   # restore them so leading gaps stay NA until the post-detrend fill step
@@ -239,6 +278,10 @@ skip_cols <- c("operational_day", "estimated_avoidable_deaths")
 for (col in setdiff(names(dat6), skip_cols)) {
   dat6[[col]] <- remove_gam_outliers_wide(dat6, col)
 }
+
+# ============================================================
+# Deseasonalisation
+# ============================================================
 
 dat6$wday <- factor(lubridate::wday(dat6$operational_day, label = TRUE, abbr = TRUE))
 dat6$mon <- factor(lubridate::month(dat6$operational_day, label = TRUE, abbr = TRUE))
@@ -283,10 +326,18 @@ dat6 <- dat6 %>%
   mutate(across(all_of(covar_cols), ~ (.x - mean(.x[operational_day <= train_cutoff], na.rm = TRUE)) /
                   sd(.x[operational_day <= train_cutoff], na.rm = TRUE)))
 
+# ============================================================
+# GAM outlier removal (2)
+# ============================================================
+
 skip_cols <- c("operational_day", "estimated_avoidable_deaths")
 for (col in setdiff(names(dat6), skip_cols)) {
   dat6[[col]] <- remove_gam_outliers_wide(dat6, col)
 }
+
+# ============================================================
+# Cross-correlation detection
+# ============================================================
 
 dat6_copy <- dat6 %>%
   mutate(across(everything(), ~ replace_na(.x, 0)))
@@ -335,6 +386,10 @@ registry_final   <- unique(to_registry(covar_cols_final))
 registry_pre_corr <- unique(to_registry(kept_cols_cov))   # what entered the corr step
 registry_dropped_corr <- setdiff(registry_pre_corr, registry_final)
 
+# ============================================================
+# Random forest
+# ============================================================
+
 lag_cols <- setdiff(names(dat6), c("estimated_avoidable_deaths", "operational_day"))
 lag_list <- shift(as.data.frame(dat6)[lag_cols], n = 1:13, type = "lag", give.names = TRUE)
 dat_lagged <- cbind(as.data.frame(dat6), lag_list)
@@ -351,7 +406,10 @@ importance_indices <- seq_along(rf_selection)
 covariate_scores <- tapply(importance_indices, base_covariate, sum)
 covariate_scores <- sort(covariate_scores, decreasing = TRUE)
 
-n_keep <- 10
+# ============================================================
+# Save output
+# ============================================================
+
 top_covariates <- names(covariate_scores)[1:n_keep]
 name_map <- setNames(names(dat6), make.names(names(dat6)))
 top_covariates_original <- name_map[top_covariates]
