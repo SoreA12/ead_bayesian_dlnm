@@ -1,4 +1,25 @@
-# used
+# ============================================================
+# Install/load required packages
+# ============================================================
+
+packages <- c(
+  "here",
+  "tidyverse",
+  "imputeTS",
+  "mgcv",
+  "data.table",
+  "ranger"
+)
+
+installed <- rownames(installed.packages())
+
+for (pkg in packages) {
+  if (!(pkg %in% installed)) {
+    install.packages(pkg, repos = "https://cloud.r-project.org")
+  }
+}
+
+# Load packages
 library(here)
 library(tidyverse)
 library(imputeTS)
@@ -6,10 +27,17 @@ library(mgcv)
 library(data.table)
 library(ranger)
 
-# script settings go here
+# ============================================================
+# Script settings
+# ============================================================
+
+n_keep <- 10
 train_cutoff <- as.Date("2025-09-30")
 
-# unzip the training and validation datasets programatically
+# ============================================================
+# Unzip training and validation datasets
+# ============================================================
+
 unzip(here("data", "raw", "turingAI_forecasting_challenge_dataset.csv.zip"),
       exdir = here("data", "interim"))
 unzip(here("data", "raw", "turingAI_forecasting_challenge_validation_dataset.zip"),
@@ -24,6 +52,10 @@ dat_train <- read_csv(fp_train)
 dat_train <- dat_train[dat_train$dt <= train_cutoff, ]
 dat_val <- read_csv(fp_val)
 metric_selection <- read_csv(fp_covselect)
+
+# ============================================================
+# First cleaning
+# ============================================================
 
 # replace cov values of -9999 with Nan
 dat1 <- rbind(dat_train, dat_val)
@@ -44,7 +76,10 @@ dat3 <- dat2 %>%
     .groups = "drop"
   )
 
-# what goes on here?
+# ============================================================
+# What goes on here?
+# ============================================================
+
 metric_selection <- metric_selection %>% mutate(across(everything(), str_trim))
 
 forbidden_names <- metric_selection %>% filter(toupper(Keep) == "NO") %>% pull(`Metric Name`)
@@ -102,7 +137,10 @@ to_registry <- function(col_names) {
   }, character(1), USE.NAMES = FALSE)
 }
 
-# find the longest continuous gap length in data
+# ============================================================
+# Gap length
+# ============================================================
+
 find_longest_NA_string <- function(x) {
   
   col_index <- which(!is.na(x))[1]
@@ -156,6 +194,10 @@ registry_kept        <- unique(to_registry(kept_cols_cov))
 # a covariate is only *truly* dropped if NONE of its columns survived:
 registry_truly_dropped <- setdiff(registry_dropped_raw, registry_kept)
 
+# ============================================================
+# Interpolation of NA
+# ============================================================
+
 # helper function to linearily interpolate interior/training NA
 interpolate_non_leading <- function(x) {
   first_valid <- which(!is.na(x))[1]
@@ -174,6 +216,10 @@ dat6 <- dat5 %>%
   # Handle target variable
   mutate(estimated_avoidable_deaths = na_locf(estimated_avoidable_deaths, na_remaining = "rev")) %>%
   mutate(estimated_avoidable_deaths = pmax(0, estimated_avoidable_deaths))
+
+# ============================================================
+# GAM outlier removal (1)
+# ============================================================
 
 remove_gam_outliers_wide <- function(dat, col_name) {
   
@@ -233,6 +279,10 @@ for (col in setdiff(names(dat6), skip_cols)) {
   dat6[[col]] <- remove_gam_outliers_wide(dat6, col)
 }
 
+# ============================================================
+# Deseasonalisation
+# ============================================================
+
 dat6$wday <- factor(lubridate::wday(dat6$operational_day, label = TRUE, abbr = TRUE))
 dat6$mon <- factor(lubridate::month(dat6$operational_day, label = TRUE, abbr = TRUE))
 contrasts(dat6$wday) <- contr.sum(7)
@@ -276,10 +326,18 @@ dat6 <- dat6 %>%
   mutate(across(all_of(covar_cols), ~ (.x - mean(.x[operational_day <= train_cutoff], na.rm = TRUE)) /
                   sd(.x[operational_day <= train_cutoff], na.rm = TRUE)))
 
+# ============================================================
+# GAM outlier removal (2)
+# ============================================================
+
 skip_cols <- c("operational_day", "estimated_avoidable_deaths")
 for (col in setdiff(names(dat6), skip_cols)) {
   dat6[[col]] <- remove_gam_outliers_wide(dat6, col)
 }
+
+# ============================================================
+# Cross-correlation detection
+# ============================================================
 
 dat6_copy <- dat6 %>%
   mutate(across(everything(), ~ replace_na(.x, 0)))
@@ -328,6 +386,10 @@ registry_final   <- unique(to_registry(covar_cols_final))
 registry_pre_corr <- unique(to_registry(kept_cols_cov))   # what entered the corr step
 registry_dropped_corr <- setdiff(registry_pre_corr, registry_final)
 
+# ============================================================
+# Random forest
+# ============================================================
+
 lag_cols <- setdiff(names(dat6), c("estimated_avoidable_deaths", "operational_day"))
 lag_list <- shift(as.data.frame(dat6)[lag_cols], n = 1:13, type = "lag", give.names = TRUE)
 dat_lagged <- cbind(as.data.frame(dat6), lag_list)
@@ -344,7 +406,10 @@ importance_indices <- seq_along(rf_selection)
 covariate_scores <- tapply(importance_indices, base_covariate, sum)
 covariate_scores <- sort(covariate_scores, decreasing = TRUE)
 
-n_keep <- 10
+# ============================================================
+# Save output
+# ============================================================
+
 top_covariates <- names(covariate_scores)[1:n_keep]
 name_map <- setNames(names(dat6), make.names(names(dat6)))
 top_covariates_original <- name_map[top_covariates]
