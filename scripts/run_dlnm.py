@@ -174,6 +174,10 @@ for var in ["mu0", "A", "gamma", "sigma_obs"]:
     plt.savefig(os.path.join(output_dir, f'trace-{var}.pdf'))
     plt.close()
 
+# Summary table of convergence diagnostics
+summary = az.summary(trace, var_names=["mu0", "A", "gamma", "sigma_obs"])
+summary.to_csv(os.path.join(output_dir, 'trace-summary.csv'), index=True)
+
 # Training goodness-of-fit plot
 post_pred = train.posterior_predictive["obs"].median(dim=['chain','draw'])
 lower = train.posterior_predictive["obs"].quantile(q=0.025, dim=['chain', 'draw'])
@@ -526,8 +530,3 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
     return pred_matrix, mse_summary, bayesian_and_gam, np.mean(mse_records_1_5), np.mean(mse_records_6_10)
 
 evaluate_forecasts(datetime(2025, 9, 30), training_end_date, 131, n_test, train)
-        
-# Summary table of convergence diagnostics
-summary = az.summary(trace, var_names=["mu0", "A", "gamma", "sigma_AR", "sigma_obs"])
-summary.to_csv(os.path.join(output_dir, 'trace-summary.csv'), index=True)
-
