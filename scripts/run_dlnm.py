@@ -453,7 +453,7 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
         print(f"Window Number {step}")
         with nhs_model:
             pm.set_data({"t_shared": t_val, "d_shared": d_val, "y_shared": y_val, "X_shared": X_test, "K_shared": K_test}, coords={"date": dt_val})
-            forecast = pm.sample_posterior_predictive(trace, sample_vars=["mu_AR", "obs"], progressbar=False)
+            forecast = pm.sample_posterior_predictive(trace, sample_vars=["obs"], progressbar=False)
 
         # Compute forecast MSE
         y_pred = np.expm1(forecast["posterior_predictive/obs"].median(dim=['chain', 'draw']).sel(date=forecast_eval_dates)).values
