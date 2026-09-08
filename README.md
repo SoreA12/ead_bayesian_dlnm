@@ -15,3 +15,17 @@ To update the conda environment (after adding new packages) use,
 ```bash
 conda env update -f EAD_BAYESIAN_DLNM_env.yml --prune
 ```
+
+## Feature engineering
+
+```bash
+cd scripts
+Rscript data_cleaning.R
+```
+
+## DLNM model
+
+```bash
+cd scripts
+python build_model.py
+```
