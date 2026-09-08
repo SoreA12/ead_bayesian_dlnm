@@ -139,7 +139,7 @@ with pm.Model(coords=coords) as nhs_model:
 
     # DLNM
     B_prime_K = pt.as_tensor(B_prime)[K_shared]
-    gamma = pm.Laplace("gamma", mu=0, b=(0.1/3)/(np.sqrt(2)), shape=(M, M_prime, n_covs))
+    gamma = pm.Laplace("gamma", mu=0, b=(0.25/3)/(np.sqrt(2)), shape=(M, M_prime, n_covs))
     mu_covariates = pm.Deterministic("mu_covariates", pt.einsum('nm,tncp,mpc->t', B, B_prime_K, gamma))
 
     # Day-of-week RE
