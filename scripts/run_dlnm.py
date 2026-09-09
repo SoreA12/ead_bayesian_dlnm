@@ -189,8 +189,8 @@ with nhs_model:
     train = pm.sample_posterior_predictive(trace)
 
 # Save traces
-os.makedirs(os.path.join(project_root, "results", "dlnm"), exist_ok=True)   
-trace.to_netcdf(os.path.join(project_root, "results", "dlnm", "pymc_trace.nc"))
+# os.makedirs(os.path.join(project_root, "results", "dlnm"), exist_ok=True)   
+# trace.to_netcdf(os.path.join(project_root, "results", "dlnm", "pymc_trace.nc"))
 
 # Save traceplots
 output_dir = os.path.join(project_root, "results", "figures", "traces")
