@@ -37,6 +37,11 @@ output_dir = os.path.join(project_root, "results", "figures")
 
 df = pd.read_csv(data_path)
 
+# Select number of covariates to include
+num_covs = 10
+assert num_covs <= df.shape[1] - 2
+df = df.iloc[:, 0 : num_covs + 2]
+
 
 # Prepare data for pyMC
 # ~~~~~~~~~~~~~~~~~~~~~
@@ -150,6 +155,28 @@ with pm.Model(coords=coords) as nhs_model:
     mu_total = pm.Deterministic("mu_total", mu_seasonal + mu_covariates + day_of_week_effect, dims="date")
     sigma_obs = pm.HalfNormal("sigma_obs", sigma=0.15/3)
     obs = pm.Normal("obs", mu=mu_total, sigma=sigma_obs, observed=y_shared, dims="date")
+    
+
+# Maximize likelihood of posterior before sampling
+with nhs_model:
+    map_est, opt = pm.find_MAP(
+        vars=[mu0, A, gamma, phi_d, sigma_obs],
+        method="L-BFGS-B",
+        include_transformed=False,
+        return_raw=True,
+    )
+
+print(opt.success, opt.message, opt.nit)
+print({k: v for k, v in map_est.items() if k != "gamma"})
+print(np.abs(map_est["gamma"]).max())
+
+mu_hat = (
+    map_est["mu0"]
+    + map_est["A"] * np.cos((2 * np.pi * t_train / 365.25) - phi)
+    + np.einsum("nm,tncp,mpc->t", B, B_prime[K_train], map_est["gamma"])
+    + map_est["phi_d"][d_train]
+)
+print(np.std(y_train - mu_hat), map_est["sigma_obs"])
 
 
 # Sample the pyMC model
@@ -162,8 +189,8 @@ with nhs_model:
     train = pm.sample_posterior_predictive(trace)
 
 # Save traces
-os.makedirs(os.path.join(project_root, "results", "model"), exist_ok=True)   
-trace.to_netcdf(os.path.join(project_root, "results", "model", "pymc_trace.nc"))
+os.makedirs(os.path.join(project_root, "results", "dlnm"), exist_ok=True)   
+trace.to_netcdf(os.path.join(project_root, "results", "dlnm", "pymc_trace.nc"))
 
 # Save traceplots
 output_dir = os.path.join(project_root, "results", "figures", "traces")
@@ -496,7 +523,7 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
         f"day_{x}": [forecast_container[i][x-1] for i in range(num_forecasts)]
     for x in range(1, 11)
     })
-    csv_out = os.path.join(project_root, "results", "tables", "pred_matrix.csv")
+    csv_out = os.path.join(project_root, "results", "dlnm", "pred_matrix.csv")
     os.makedirs(os.path.dirname(csv_out), exist_ok=True)
     pred_matrix.to_csv(csv_out, index=False)
 
@@ -505,7 +532,7 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
         "mse_1_5": mse_records_1_5,
         "mse_6_10": mse_records_6_10
     })
-    csv_out = os.path.join(project_root, "results", "tables", "mse_summary.csv")
+    csv_out = os.path.join(project_root, "results", "dlnm", "mse_summary.csv")
     os.makedirs(os.path.dirname(csv_out), exist_ok=True)
     mse_summary.to_csv(csv_out, index=False)
 
@@ -516,7 +543,7 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
         "MSE_null_1_5": gam_mse_records_1_5,
         "MSE_null_6_10": gam_mse_records_6_10
     })
-    csv_out = os.path.join(project_root, "results", "tables", "bayesian_and_gam.csv")
+    csv_out = os.path.join(project_root, "results", "dlnm", "bayesian_and_gam.csv")
     os.makedirs(os.path.dirname(csv_out), exist_ok=True)
     bayesian_and_gam.to_csv(csv_out, index=False)
 
