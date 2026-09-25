@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 import patsy
 import os
 from pyprojroot import here
+import itertools
+import math
 
 
 # Model settings go here
@@ -166,32 +168,16 @@ with nhs_model:
         return_raw=True,
     )
 
-print(opt.success, opt.message, opt.nit)
-print({k: v for k, v in map_est.items() if k != "gamma"})
-print(np.abs(map_est["gamma"]).max())
-
-mu_hat = (
-    map_est["mu0"]
-    + map_est["A"] * np.cos((2 * np.pi * t_train / 365.25) - phi)
-    + np.einsum("nm,tncp,mpc->t", B, B_prime[K_train], map_est["gamma"])
-    + map_est["phi_d"][d_train]
-)
-print(np.std(y_train - mu_hat), map_est["sigma_obs"])
-
-
 # Sample the pyMC model
 # ~~~~~~~~~~~~~~~~~~~~~
-
 with nhs_model:
-    trace = pm.sample(draws=150, tune=150, chains=3, progressbar=True, target_accept=0.8,  
-                      init='adapt_diag',                                                              
-                      initvals=3*[{'mu0': mu0_est, 'A': A_est, 'sigma_obs': 0.15},])  
+    trace = pm.sample(
+        draws=150, tune=150, chains=2, progressbar=True, target_accept=0.8,  
+        init='adapt_diag',                                                              
+        initvals=map_est,
+    )
     train = pm.sample_posterior_predictive(trace)
-
-# Save traces
-# os.makedirs(os.path.join(project_root, "results", "dlnm"), exist_ok=True)   
-# trace.to_netcdf(os.path.join(project_root, "results", "dlnm", "pymc_trace.nc"))
-
+    
 # Save traceplots
 output_dir = os.path.join(project_root, "results", "figures", "traces")
 os.makedirs(output_dir, exist_ok=True)
@@ -228,6 +214,80 @@ plt.savefig(os.path.join(output_dir, 'goodness-of-fit_training.pdf'))
 plt.close()
 
 
+# This chunk gets S_ct, where we get the centered (excess) risk for covariate c on day t
+# cumulatively for all lags [t-L, t-L+1,...,t]
+y = y_df_train['y_obs'].values
+n_times, n_lags, n_covs = np.shape(K_train)
+S_ct = np.empty((n_covs, n_times))
+
+for c in range(n_covs):
+    gamma_mean = trace.posterior["gamma"].mean(("chain","draw")).values
+    surface = B @ gamma_mean[:,:,c] @ B_prime.T
+    n, n_prime = np.shape(surface)
+    # For each covariate, we compute we compUte a "target baseline"
+    # We find a cumulative log-RR by summming surface[:, bin] for each bin
+    sum_RRs = []
+    for e in range(n_prime):
+        log1p_RR = np.sum(surface[:, e])
+        sum_RRs.append(log1p_RR)
+    
+    min_index = min(range(len(sum_RRs)), key=sum_RRs.__getitem__)
+    baseline_vec = surface[:, min_index]
+    surface_baseline = surface - baseline_vec[:, np.newaxis]
+    
+    for t in range(n_times):
+        S_t = 0
+        for n in range(n_lags):
+            surface_bin = K_train[t, n, c]
+            bin_lookup = surface_baseline[n, surface_bin]
+            S_t += bin_lookup
+            
+        S_ct[c,t] = S_t
+
+C, T = S_ct.shape
+AF_daily = np.empty((n_covs, n_times))
+AN_daily = np.empty((n_covs, n_times))
+
+# S_ct is the centered cumulative log1p risk
+# v_St is the joint attributable risk fraction for coalition S on day t
+# phi_t is the AF for covariate c on day t based on the weighted sums of the difference
+# in joint AF betwween a coalition with c and that coalition without c
+for t in range(T):
+    
+    y_t = y[t]
+    S_c = S_ct[:, t]
+    v_map = {}
+    
+    for r in range(C + 1):
+
+        combos = itertools.combinations(np.arange(S_c.shape[0]), r)
+        
+        for combo in combos:
+            
+            subset_S_ct = np.sum(S_c[list(combo)])
+            v_St = ((1+y_t) / (y_t)) * (1 - np.exp(-subset_S_ct))
+            v_map[combo] = v_St
+            
+    for c in range(C):
+        
+        phi_t = 0
+        other_covs = [i for i in range(C) if i != c]
+        
+        for r in range(C):
+                
+            for combo in itertools.combinations(other_covs, r):
+                    
+                v_without = v_map[combo]
+                indices_plus_c = tuple(sorted(combo + (c,)))
+                v_with = v_map[indices_plus_c]
+                weight = math.factorial(len(combo)) * math.factorial(C - len(combo) - 1) / math.factorial(C)
+                marginal_gain = (v_with - v_without) * weight
+                phi_t += marginal_gain
+                
+        AF_daily[c, t] = phi_t
+        AN_daily[c, t] = phi_t * y_t
+            
+
 # Visualise the lag-exposure surfaces
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -237,7 +297,6 @@ for c in range(n_covs):
     
     gamma_mean = trace.posterior["gamma"].mean(("chain","draw")).values
     surface = B @ gamma_mean[:,:,c] @ B_prime.T
-    
     plot_lags, plot_bins = np.meshgrid(N, bins, indexing='ij')
     
     fig = plt.figure()
