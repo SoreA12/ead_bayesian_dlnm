@@ -219,6 +219,7 @@ plt.close()
 y = y_df_train['y_obs'].values
 n_times, n_lags, n_covs = np.shape(K_train)
 S_ct = np.empty((n_covs, n_times))
+each_exposure = False
 
 for c in range(n_covs):
     gamma_mean = trace.posterior["gamma"].mean(("chain","draw")).values
@@ -227,13 +228,31 @@ for c in range(n_covs):
     # For each covariate, we compute we compUte a "target baseline"
     # We find a cumulative log-RR by summming surface[:, bin] for each bin
     sum_RRs = []
-    for e in range(n_prime):
-        log1p_RR = np.sum(surface[:, e])
-        sum_RRs.append(log1p_RR)
     
-    min_index = min(range(len(sum_RRs)), key=sum_RRs.__getitem__)
-    baseline_vec = surface[:, min_index]
-    surface_baseline = surface - baseline_vec[:, np.newaxis]
+    if each_exposure:
+        
+        for e in range(n_prime):
+            log1p_RR = np.sum(surface[:, e]) 
+            # also try np.sum(surface[l, :]), use an if statement to switch
+            # maybe plot the trajectory of least risk (both for per lag min and per exposure min)
+            # Look into the interpretations of Shapley values
+            sum_RRs.append(log1p_RR)
+                
+    else:
+        
+        surface_baseline = surface.copy()
+        
+        for l in range(n):
+            
+            min_for_lag_l = np.min(surface[l])
+            surface_baseline[l] = surface_baseline[l] - min_for_lag_l          
+    
+    if each_exposure:
+        
+        min_index = min(range(len(sum_RRs)), key=sum_RRs.__getitem__)
+        baseline_vec = surface[:, min_index]
+        surface_baseline = surface - baseline_vec[:, np.newaxis]
+        
     
     for t in range(n_times):
         S_t = 0
@@ -252,6 +271,7 @@ AN_daily = np.empty((n_covs, n_times))
 # v_St is the joint attributable risk fraction for coalition S on day t
 # phi_t is the AF for covariate c on day t based on the weighted sums of the difference
 # in joint AF betwween a coalition with c and that coalition without c
+
 for t in range(T):
     
     y_t = y[t]
@@ -265,7 +285,7 @@ for t in range(T):
         for combo in combos:
             
             subset_S_ct = np.sum(S_c[list(combo)])
-            v_St = ((1+y_t) / (y_t)) * (1 - np.exp(-subset_S_ct))
+            v_St = 1.0 - np.exp(-subset_S_ct)
             v_map[combo] = v_St
             
     for c in range(C):
@@ -285,8 +305,85 @@ for t in range(T):
                 phi_t += marginal_gain
                 
         AF_daily[c, t] = phi_t
-        AN_daily[c, t] = phi_t * y_t
+        AN_daily[c, t] = phi_t * (1.0 + y_t) 
+        AF_c = np.sum(AN_daily, axis=1) / np.sum(1 + y)
+           
+# Plotting a walk along the lag dimension for each cov finding min risk path 
+save_dir = os.path.join(project_root, "results", "figures", "Lag-Exposure Baseline")
+os.makedirs(save_dir, exist_ok=True)
+
+for c in range(n_covs):
+    gamma_mean = trace.posterior["gamma"].mean(("chain", "draw")).values
+    surface = B @ gamma_mean[:, :, c] @ B_prime.T
+    n_lags_dim, n_bins_dim = surface.shape
+
+    # Extract path of lowest risk across lags
+    min_indices = np.argmin(surface, axis=1)
+    path_bins = bins[min_indices]
+    path_lags = np.arange(n_lags_dim)
+    path_risks = surface[path_lags, min_indices]
+
+    # Plot 3D Surface with Path of Lowest Risk Overlay
+    plot_lags, plot_bins = np.meshgrid(N, bins, indexing="ij")
+
+    fig = plt.figure(figsize=(10, 7))
+    ax = fig.add_subplot(projection="3d")
+    ax.plot_surface(
+        plot_bins,
+        plot_lags,
+        surface,
+        cmap="coolwarm",
+        edgecolor="k",
+        linewidth=0.2,
+        alpha=0.85,
+    )
+
+    # Walk along the path of lowest risk
+    ax.plot(
+        path_bins,
+        path_lags,
+        path_risks,
+        color="red",
+        linewidth=3,
+        marker="o",
+        markersize=5,
+        label="Path of lowest risk across lags",
+        zorder=10,
+    )
+
+    ax.set_xlabel("Covariate Values")
+    ax.set_ylabel("Lags")
+    ax.set_zlabel("Log-Relative Risk")
+    ax.legend(loc="upper right")
+    plt.title(f"Surface for {X_scaled.columns[c]}")
+
+    file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}.pdf"
+    plt.savefig(os.path.join(save_dir, file_name), bbox_inches="tight")
+    plt.close()
             
+
+
+save_dir = os.path.join(project_root, "results", "figures", "Lag-Exposure Baseline 2D")
+os.makedirs(save_dir, exist_ok=True)
+
+for c in range(n_covs):
+    gamma_mean = trace.posterior["gamma"].mean(("chain", "draw")).values
+    surface = B @ gamma_mean[:, :, c] @ B_prime.T
+
+    plt.imshow(surface, extent=[bins[0], bins[-1], 0, surface.shape[0]], cmap='viridis', aspect='auto', origin='lower')
+    plt.colorbar(label="Log-Relative Risk")
+    
+    plt.plot(bins[np.argmin(surface, axis=1)], np.arange(surface.shape[0]) + 0.5, 'ro-', markersize=4, label="Path of lowest risk")
+
+    plt.xlabel('Covariate Values')
+    plt.ylabel('Lags')
+    plt.title(f"Baseline 2D Surface: {X_scaled.columns[c]}")
+    plt.legend()
+    
+    plt.savefig(os.path.join(save_dir, f"Lag_Exposure_Baseline_2D_{X_scaled.columns[c]}.pdf"), bbox_inches='tight')
+    plt.close()
+
+
 
 # Visualise the lag-exposure surfaces
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -308,9 +405,10 @@ for c in range(n_covs):
     ax.set_zlabel('values')
 
     plt.title(f"Surface for {X_scaled.columns[c]}")
-    file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}.pdf"
+    file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_{np.sum(AN_daily, axis=1)[c]}.pdf"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
     plt.close()
+    
     
 for c in range(n_covs):
     save_dir = os.path.join(project_root, "results", "figures", "Lag-Exposure Surfaces 2D")
@@ -328,7 +426,7 @@ for c in range(n_covs):
     file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_2D.pdf"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
     plt.close()
-    
+
 # (n, m) @ (m, m_prime) @ (m_prime, n_prime) --> (n, n_prime)
 for c in range(n_covs):
     for b in range(n_lags):
@@ -399,7 +497,6 @@ for c in range(n_covs):
 
 # Assess out-of-sample forecasting accuracy
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 # Evaluate forecast accuracy out-of-sample
 def plot_window_trajectory(train, forecast, y_df_test, dt_test, anchor_date, null_forecast, null_score=None, model_score=None):
     save_dir = os.path.join(project_root, "results", "figures", "forecasts")
