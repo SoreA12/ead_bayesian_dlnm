@@ -33,6 +33,7 @@ library(ranger)
 
 n_keep <- 10
 train_cutoff <- as.Date("2025-09-30")
+deseasonalize <- TRUE
 
 # ============================================================
 # Unzip training and validation datasets
@@ -282,36 +283,37 @@ for (col in setdiff(names(dat6), skip_cols)) {
 # ============================================================
 # Deseasonalisation
 # ============================================================
-
-dat6$wday <- factor(lubridate::wday(dat6$operational_day, label = TRUE, abbr = TRUE))
-dat6$mon <- factor(lubridate::month(dat6$operational_day, label = TRUE, abbr = TRUE))
-contrasts(dat6$wday) <- contr.sum(7)
-contrasts(dat6$mon) <- contr.sum(12)
-seasonal_df <- model.matrix(~ wday + mon - 1, data = dat6) %>% as.data.frame()
-clean_names <- c(levels(dat6$wday), levels(dat6$mon)[-12])
-colnames(seasonal_df) <- clean_names
-dat6 <- cbind(dat6, seasonal_df)
-seasonal_cols <- colnames(seasonal_df)
-covar_cols <- setdiff(colnames(dat6), c("estimated_avoidable_deaths", "operational_day", "wday", "mon", seasonal_cols))
-pre_regression <- dat6 %>% select(operational_day, all_of(covar_cols))
-
-for(column in covar_cols) {
-  start_date <- dat6$operational_day[which(!is.na(dat6[[column]]))[1]]
+if(deseasonalize) {
+  dat6$wday <- factor(lubridate::wday(dat6$operational_day, label = TRUE, abbr = TRUE))
+  dat6$mon <- factor(lubridate::month(dat6$operational_day, label = TRUE, abbr = TRUE))
+  contrasts(dat6$wday) <- contr.sum(7)
+  contrasts(dat6$mon) <- contr.sum(12)
+  seasonal_df <- model.matrix(~ wday + mon - 1, data = dat6) %>% as.data.frame()
+  clean_names <- c(levels(dat6$wday), levels(dat6$mon)[-12])
+  colnames(seasonal_df) <- clean_names
+  dat6 <- cbind(dat6, seasonal_df)
+  seasonal_cols <- colnames(seasonal_df)
+  covar_cols <- setdiff(colnames(dat6), c("estimated_avoidable_deaths", "operational_day", "wday", "mon", seasonal_cols))
+  pre_regression <- dat6 %>% select(operational_day, all_of(covar_cols))
   
-  formula_str <- paste0("`", column, "` ~ ", paste(seasonal_cols, collapse = " + "))
-  model <- lm(as.formula(formula_str), data = dat6 %>% filter(operational_day >= start_date))
-  
-  na_coefs <- names(which(is.na(coef(model))))
-  if(length(na_coefs) > 0) {
-    current_seasonal_cols <- setdiff(seasonal_cols, na_coefs)
-    formula_str <- paste0("`", column, "` ~ ", paste(current_seasonal_cols, collapse = " + "))
+  for(column in covar_cols) {
+    start_date <- dat6$operational_day[which(!is.na(dat6[[column]]))[1]]
+    
+    formula_str <- paste0("`", column, "` ~ ", paste(seasonal_cols, collapse = " + "))
     model <- lm(as.formula(formula_str), data = dat6 %>% filter(operational_day >= start_date))
+    
+    na_coefs <- names(which(is.na(coef(model))))
+    if(length(na_coefs) > 0) {
+      current_seasonal_cols <- setdiff(seasonal_cols, na_coefs)
+      formula_str <- paste0("`", column, "` ~ ", paste(current_seasonal_cols, collapse = " + "))
+      model <- lm(as.formula(formula_str), data = dat6 %>% filter(operational_day >= start_date))
+    }
+    
+    dat6[[column]] <- dat6[[column]] - predict(model, newdata = dat6)
   }
   
-  dat6[[column]] <- dat6[[column]] - predict(model, newdata = dat6)
+  dat6 <- dat6 %>% select(-wday, -mon, -any_of(seasonal_cols))
 }
-
-dat6 <- dat6 %>% select(-wday, -mon, -any_of(seasonal_cols))
 
 dat6 <- dat6 %>%
   mutate(across(all_of(covar_cols), ~ {
@@ -322,7 +324,6 @@ dat6 <- dat6 %>%
     }
     x
   })) %>%
-  # Currently data leakage, to be handled later
   mutate(across(all_of(covar_cols), ~ (.x - mean(.x[operational_day <= train_cutoff], na.rm = TRUE)) /
                   sd(.x[operational_day <= train_cutoff], na.rm = TRUE)))
 
@@ -330,11 +331,12 @@ dat6 <- dat6 %>%
 # GAM outlier removal (2)
 # ============================================================
 
-skip_cols <- c("operational_day", "estimated_avoidable_deaths")
-for (col in setdiff(names(dat6), skip_cols)) {
-  dat6[[col]] <- remove_gam_outliers_wide(dat6, col)
+if(deseasonalize) {
+  skip_cols <- c("operational_day", "estimated_avoidable_deaths")
+  for (col in setdiff(names(dat6), skip_cols)) {
+    dat6[[col]] <- remove_gam_outliers_wide(dat6, col)
+  }
 }
-
 # ============================================================
 # Cross-correlation detection
 # ============================================================
@@ -410,11 +412,9 @@ covariate_scores <- sort(covariate_scores, decreasing = TRUE)
 # Save output
 # ============================================================
 
-top_covariates <- names(covariate_scores)[1:n_keep]
+all_covariates <- names(covariate_scores)
 name_map <- setNames(names(dat6), make.names(names(dat6)))
-top_covariates_original <- name_map[top_covariates]
-dat6 <- dat6 %>% select(all_of(c("operational_day", "estimated_avoidable_deaths", top_covariates_original)))
+all_covariates_original <- name_map[all_covariates]
+dat6 <- dat6 %>% select(all_of(c("operational_day", "estimated_avoidable_deaths", all_covariates_original)))
 
 write.csv(dat6, here("data", "processed", "modeldat.csv"), row.names = FALSE)
-
-
