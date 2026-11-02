@@ -21,8 +21,8 @@ n_data_lag = 3
 training_end_date = datetime(2025, 9, 30)
 # Drop degree to 2, dropping M to 3
 # Look for some literature for Shapley Values and if it has been implemented with attributable risk for any kind of model
-M = 3
-M_prime = 4
+M = 5
+M_prime = 5
 
 # derived from settings
 last_training_data_date = training_end_date - timedelta(days=n_data_lag)
@@ -110,20 +110,28 @@ K = np.digitize(X_final, bins) - 1
 K_train = np.digitize(X_train, bins) - 1
 
 N = np.sort(np.abs(X_df_train['lag'].unique()))
-B = patsy.dmatrix("bs(N, df=M, degree=2, include_intercept=True) - 1", {"N": N})
+B = patsy.dmatrix("bs(N, df=M, degree=3, include_intercept=True) - 1", {"N": N})
 B = np.asarray(B)
 
 N_prime = bins
 B_prime = patsy.dmatrix("bs(N_prime, df=M_prime, degree=3, include_intercept=True) - 1", {"N_prime": N_prime})
 B_prime = np.asarray(B_prime)
 
-# How can we define a baseline that encompasses positive and negative correlation between covariates and estimated avoidable deaths
-# One idea: Define a vector B_prime_vec, s.t. B_prime_vec[i] represents the ith B_prime matrix?
-# Could we run a simple correlation to see the direction of each covariate to avoidable deaths then define each baseline manually (smallest bin, mean, largest bin)
-# I'm not sure if the B_prime_vec[i] idea would work. It would essentially add another dimension to B_prime
-B_prime_center = B_prime[50]
-B_prime = B_prime - B_prime_center[None, :]
+# implement an integrate-to-zero constraint on the cross basis to remove the offset
+# --> instead of forcing the surface to be zero somewhere arbitrary, find the null space of the coefficients gamma
+# --> then multiply the estimated coefficients with the null space to impose the constraint in the maths
 
+import scipy
+
+# integrate spline basis functions
+w_l = np.trapezoid(B, N, axis=0)    # (M,)
+w_x = np.trapezoid(B_prime, bins, axis=0)   # (M_prime,)
+
+# construct the combined constraint vector
+w = np.outer(w_l, w_x).ravel()  # (M x M_prime,)
+
+# compute the null-space basis (find Q so that w @ Q = 0)
+Q = scipy.linalg.null_space(w[None, :])     # (M x M_prime, M x M_prime - 1) --> one degree of freedom removed by integrate-to-one constraint --> try: w @ Q = 0 
 
 
 # Build the pyMC model
@@ -138,6 +146,10 @@ coords = {
     "b_functions_lags": np.arange(M),
     "bins": bins, 
         }
+
+# Second-order difference matrices
+D2_lag = np.diff(np.eye(M), n=2, axis=0)
+D2_exposure = np.diff(np.eye(M_prime), n=2, axis=0)
 
 with pm.Model(coords=coords) as nhs_model:
 
@@ -156,7 +168,8 @@ with pm.Model(coords=coords) as nhs_model:
 
     # DLNM
     B_prime_K = pt.as_tensor(B_prime)[K_shared]
-    gamma = pm.Laplace("gamma", mu=0, b=(0.25/3)/(np.sqrt(2)), shape=(M, M_prime, n_covs))
+    theta = pm.Laplace("theta", mu=0, b=(0.25/3)/(np.sqrt(2)), shape=(M * M_prime - 1, n_covs))   
+    gamma = pm.Deterministic("gamma", (Q @ theta).reshape((M, M_prime, n_covs)))
     mu_covariates = pm.Deterministic("mu_covariates", pt.einsum('nm,tncp,mpc->t', B, B_prime_K, gamma))
 
     # Day-of-week RE
@@ -172,7 +185,7 @@ with pm.Model(coords=coords) as nhs_model:
 # Maximize likelihood of posterior before sampling
 with nhs_model:
     map_est, opt = pm.find_MAP(
-        vars=[mu0, A, gamma, phi_d, sigma_obs],
+        vars=[mu0, A, theta, phi_d, sigma_obs],
         method="L-BFGS-B",
         include_transformed=False,
         return_raw=True,
