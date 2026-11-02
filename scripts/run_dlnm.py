@@ -21,8 +21,8 @@ n_data_lag = 3
 training_end_date = datetime(2025, 9, 30)
 # Drop degree to 2, dropping M to 3
 # Look for some literature for Shapley Values and if it has been implemented with attributable risk for any kind of model
-M = 5
-M_prime = 5
+M = 3
+M_prime = 4
 
 # derived from settings
 last_training_data_date = training_end_date - timedelta(days=n_data_lag)
@@ -42,7 +42,7 @@ output_dir = os.path.join(project_root, "results", "figures")
 df = pd.read_csv(data_path)
 
 # Select number of covariates to include
-num_covs = 10
+num_covs = 25
 assert num_covs <= df.shape[1] - 2
 df = df.iloc[:, 0 : num_covs + 2]
 
@@ -110,13 +110,18 @@ K = np.digitize(X_final, bins) - 1
 K_train = np.digitize(X_train, bins) - 1
 
 N = np.sort(np.abs(X_df_train['lag'].unique()))
-B = patsy.dmatrix("bs(N, df=M, degree=3, include_intercept=True) - 1", {"N": N})
+B = patsy.dmatrix("bs(N, df=M, degree=2, include_intercept=True) - 1", {"N": N})
 B = np.asarray(B)
 
 N_prime = bins
 B_prime = patsy.dmatrix("bs(N_prime, df=M_prime, degree=3, include_intercept=True) - 1", {"N_prime": N_prime})
 B_prime = np.asarray(B_prime)
 
+# force intercept at x=0
+# B_prime_center = B_prime[50]
+# B_prime = B_prime - B_prime_center[None, :]
+
+# Possible alternative:
 # implement an integrate-to-zero constraint on the cross basis to remove the offset
 # --> instead of forcing the surface to be zero somewhere arbitrary, find the null space of the coefficients gamma
 # --> then multiply the estimated coefficients with the null space to impose the constraint in the maths
@@ -185,7 +190,7 @@ with pm.Model(coords=coords) as nhs_model:
 # Maximize likelihood of posterior before sampling
 with nhs_model:
     map_est, opt = pm.find_MAP(
-        vars=[mu0, A, theta, phi_d, sigma_obs],
+        vars=[mu0, A, phi_d, sigma_obs],
         method="L-BFGS-B",
         include_transformed=False,
         return_raw=True,
