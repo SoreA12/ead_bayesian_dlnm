@@ -19,7 +19,9 @@ import math
 n_test = 10
 n_data_lag = 3
 training_end_date = datetime(2025, 9, 30)
-M = 4
+# Drop degree to 2, dropping M to 3
+# Look for some literature for Shapley Values and if it has been implemented with attributable risk for any kind of model
+M = 3
 M_prime = 4
 
 # derived from settings
@@ -108,12 +110,20 @@ K = np.digitize(X_final, bins) - 1
 K_train = np.digitize(X_train, bins) - 1
 
 N = np.sort(np.abs(X_df_train['lag'].unique()))
-B = patsy.dmatrix("bs(N, df=M, degree=3, include_intercept=True) - 1", {"N": N})
+B = patsy.dmatrix("bs(N, df=M, degree=2, include_intercept=True) - 1", {"N": N})
 B = np.asarray(B)
 
 N_prime = bins
 B_prime = patsy.dmatrix("bs(N_prime, df=M_prime, degree=3, include_intercept=True) - 1", {"N_prime": N_prime})
 B_prime = np.asarray(B_prime)
+
+# How can we define a baseline that encompasses positive and negative correlation between covariates and estimated avoidable deaths
+# One idea: Define a vector B_prime_vec, s.t. B_prime_vec[i] represents the ith B_prime matrix?
+# Could we run a simple correlation to see the direction of each covariate to avoidable deaths then define each baseline manually (smallest bin, mean, largest bin)
+# I'm not sure if the B_prime_vec[i] idea would work. It would essentially add another dimension to B_prime
+B_prime_center = B_prime[50]
+B_prime = B_prime - B_prime_center[None, :]
+
 
 
 # Build the pyMC model
@@ -184,7 +194,7 @@ os.makedirs(output_dir, exist_ok=True)
 for var in ["mu0", "A", "gamma", "sigma_obs"]:
     az.plot_trace_dist(trace, var_names=[var], compact=True, combined=False, kind='kde')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'trace-{var}.pdf'))
+    plt.savefig(os.path.join(output_dir, f'trace-{var}.svg'))
     plt.close()
 
 # Summary table of convergence diagnostics
@@ -210,7 +220,7 @@ plt.legend()
 
 plt.gcf().autofmt_xdate() 
 
-plt.savefig(os.path.join(output_dir, 'goodness-of-fit_training.pdf'))
+plt.savefig(os.path.join(output_dir, 'goodness-of-fit_training.svg'), bbox_inches='tight', pad_inches=0.02)
 plt.close()
 
 
@@ -230,6 +240,7 @@ for c in range(n_covs):
     sum_RRs = []
     
     if each_exposure:
+        # Look at more covariates
         
         for e in range(n_prime):
             log1p_RR = np.sum(surface[:, e]) 
@@ -240,18 +251,21 @@ for c in range(n_covs):
                 
     else:
         
+
         surface_baseline = surface.copy()
         
         for l in range(n):
             
             min_for_lag_l = np.min(surface[l])
-            surface_baseline[l] = surface_baseline[l] - min_for_lag_l          
+            surface_baseline[l] = surface_baseline[l] - min_for_lag_l
+
     
     if each_exposure:
         
         min_index = min(range(len(sum_RRs)), key=sum_RRs.__getitem__)
         baseline_vec = surface[:, min_index]
         surface_baseline = surface - baseline_vec[:, np.newaxis]
+        #surface_baseline = surface
         
     
     for t in range(n_times):
@@ -307,6 +321,12 @@ for t in range(T):
         AF_daily[c, t] = phi_t
         AN_daily[c, t] = phi_t * (1.0 + y_t) 
         AF_c = np.sum(AN_daily, axis=1) / np.sum(1 + y)
+        
+assert np.allclose(np.sum(AF_daily, axis=0), 1 - np.exp(-np.sum(S_ct, axis=0)), rtol=0, atol=1e-12)
+# assert np.allclose(AF_c, np.sum(AN_daily, axis = 1) / (np.sum(1 + y)), rtol=0, atol=1e-12)
+assert np.sum(AF_c) < 1
+        
+
            
 # Plotting a walk along the lag dimension for each cov finding min risk path 
 save_dir = os.path.join(project_root, "results", "figures", "Lag-Exposure Baseline")
@@ -357,7 +377,7 @@ for c in range(n_covs):
     ax.legend(loc="upper right")
     plt.title(f"Surface for {X_scaled.columns[c]}")
 
-    file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}.pdf"
+    file_name = f"Lag_Exposure_Surface_Baseline_for_{X_scaled.columns[c]}_{np.round(AF_c[c], 3)}.svg"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches="tight")
     plt.close()
             
@@ -380,7 +400,7 @@ for c in range(n_covs):
     plt.title(f"Baseline 2D Surface: {X_scaled.columns[c]}")
     plt.legend()
     
-    plt.savefig(os.path.join(save_dir, f"Lag_Exposure_Baseline_2D_{X_scaled.columns[c]}.pdf"), bbox_inches='tight')
+    plt.savefig(os.path.join(save_dir, f"Lag_Exposure_Baseline_2D_{X_scaled.columns[c]}.svg"), bbox_inches='tight')
     plt.close()
 
 
@@ -405,7 +425,7 @@ for c in range(n_covs):
     ax.set_zlabel('values')
 
     plt.title(f"Surface for {X_scaled.columns[c]}")
-    file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_{np.sum(AN_daily, axis=1)[c]}.pdf"
+    file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_{np.round(AF_c[c], 3)}.svg"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
     plt.close()
     
@@ -423,77 +443,46 @@ for c in range(n_covs):
     plt.ylabel('lags')
     plt.title(f"Surface for {X_scaled.columns[c]}")
     
-    file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_2D.pdf"
+    file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_2D.svg"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
     plt.close()
 
 # (n, m) @ (m, m_prime) @ (m_prime, n_prime) --> (n, n_prime)
+gamma_draws = trace.posterior["gamma"].stack(sample=("chain", "draw")).transpose("sample", ...).values
+surface_draws = np.einsum('nm,smpc,kp->scnk', B, gamma_draws, B_prime)
+surface_mean = surface_draws.mean(axis=0)
+surface_lower, surface_upper = np.quantile(surface_draws, [0.025, 0.975], axis=0)
+
+save_dir = os.path.join(project_root, "results", "figures", "1D Exposure Curves")
+os.makedirs(save_dir, exist_ok=True)
+
 for c in range(n_covs):
     for b in range(n_lags):
-        save_dir = os.path.join(project_root, "results", "figures", "1D Exposure Curves")
-        os.makedirs(save_dir, exist_ok=True)
-        gamma_mean = trace.posterior["gamma"].mean(("chain","draw")).values
-        gamma_quantiles = trace.posterior["gamma"].quantile([0.025, 0.5, 0.975], dim=("chain", "draw")).values
-        gamma_lower, gamma_median, gamma_upper = gamma_quantiles
-        
-        surface = B @ gamma_mean[:,:,c] @ B_prime.T
-        lower_surface = B @ gamma_lower[:,:,c] @ B_prime.T
-        upper_surface = B @ gamma_upper[:,:,c] @ B_prime.T
-        
-        single_lag_slice = surface[b,:]
-        single_lower_lag_slice = lower_surface[b,:]
-        single_upper_lag_slice = upper_surface[b,:]
-
         fig, ax = plt.subplots(figsize=(6, 6))
-        
-        # Plot Bands
-        ax.fill_between(bins, single_lower_lag_slice, single_upper_lag_slice, color="pink", lw=0, zorder=1)
-        
-        # Plot Mean
-        ax.plot(bins, single_lag_slice, color="black", marker="o", zorder=5)
-
+        ax.fill_between(bins, surface_lower[c, b], surface_upper[c, b], color="pink", lw=0, zorder=1)
+        ax.plot(bins, surface_mean[c, b], color="black", marker="o", zorder=5)
         ax.set_xlabel('covariate value')
-        ax.set_ylabel('value')
-    
-        plt.title(f"1D Curve for {X_scaled.columns[c]} on Lag {b+1}")
-        file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_lag_{b+1}.pdf"
+        ax.set_ylabel('log-relative risk')
+        plt.title(f"1D Curve for {X_scaled.columns[c]} on Lag {b}")
+        file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_lag_{b}.svg"
         plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
         plt.close()
         
 # (n, m) @ (m, m_prime) @ (m_prime, n_prime) --> (n, n_prime)
-lags = abs(X_df['lag'].unique())
+save_dir = os.path.join(project_root, "results", "figures", "1D Lag Curves")
+os.makedirs(save_dir, exist_ok=True)
+
 for c in range(n_covs):
     for a in range(n_bins):
-        save_dir = os.path.join(project_root, "results", "figures", "1D Lag Curves")
-        os.makedirs(save_dir, exist_ok=True)
-        gamma_mean = trace.posterior["gamma"].mean(("chain","draw")).values
-        gamma_quantiles = trace.posterior["gamma"].quantile([0.025, 0.5, 0.975], dim=("chain", "draw")).values
-        gamma_lower, gamma_median, gamma_upper = gamma_quantiles
-        
-        surface = B @ gamma_mean[:,:,c] @ B_prime.T
-        lower_surface = B @ gamma_lower[:,:,c] @ B_prime.T
-        upper_surface = B @ gamma_upper[:,:,c] @ B_prime.T
-        
-        single_bin_slice = surface[:,a]
-        single_lower_bin_slice = lower_surface[:,a]
-        single_upper_bin_slice = upper_surface[:,a]
-
         fig, ax = plt.subplots(figsize=(6, 6))
-        
-        # Plot Bands
-        ax.fill_between(lags, single_lower_bin_slice, single_upper_bin_slice, color="yellow", lw=0, zorder=1)
-        
-        # Plot Mean
-        ax.plot(lags, single_bin_slice, color="black", marker="o", zorder=5)
-
-        ax.set_xlabel('covariate value')
-        ax.set_ylabel('value')
-    
-        plt.title(f"1D Curve for {X_scaled.columns[c]} on Bin {a+1}")
-        file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_bin_{a+1}.pdf"
+        ax.fill_between(N, surface_lower[c, :, a], surface_upper[c, :, a], color="yellow", lw=0, zorder=1)
+        ax.plot(N, surface_mean[c, :, a], color="black", marker="o", zorder=5)
+        ax.set_xlabel('lag')
+        ax.set_ylabel('log-relative risk')
+        plt.title(f"1D Curve for {X_scaled.columns[c]} at exposure {bins[a]:.1f}")
+        file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_bin_{a+1}.svg"
         plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
         plt.close()
-
 
 # Assess out-of-sample forecasting accuracy
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -559,7 +548,7 @@ def plot_window_trajectory(train, forecast, y_df_test, dt_test, anchor_date, nul
     plt.gcf().autofmt_xdate()
     plt.tight_layout()
     
-    file_name = f"goodness-of-fit_forecast_start_{anchor_date.strftime('%Y-%m-%d')}.pdf"
+    file_name = f"goodness-of-fit_forecast_start_{anchor_date.strftime('%Y-%m-%d')}.svg"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
     plt.close()
     
@@ -612,12 +601,13 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
         n_vars = len(X_slice['covariate_name'].unique())
         X_matrix = X_slice['covariate_value'].values.reshape(n_times, n_lags, n_vars)
         X_test = np.copy(X_matrix)
-        K_test = np.digitize(X_test, bins) - 1
 
         for step_index in range(n_data_lag + 1, n_times):
             horizon_distance = step_index - n_data_lag - 1
             masked_lags = np.arange(n_lags) > horizon_distance
             X_test[step_index, ~masked_lags, :] = 0.0
+            
+        K_test = np.digitize(X_test, bins) - 1
 
         t_val = np.asarray(t_val, dtype=np.int64)
         d_val = np.asarray(d_val, dtype=np.int64)
@@ -713,3 +703,68 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
     return pred_matrix, mse_summary, bayesian_and_gam, np.mean(mse_records_1_5), np.mean(mse_records_6_10)
 
 evaluate_forecasts(datetime(2025, 9, 30), training_end_date, 131, n_test, train)
+
+'''
+# Attributable Risk with Shapley Partitioning Verification
+af_c_exposure = {
+    2: np.array([0.36351306, 0.07831546]),
+    5: np.array([0.21717102, 0.01338469, 0.12689903, 0.26867889, 0.11266448]),
+    10: np.array([0.23280348, 0.00585013, 0.16353071, 0.16735792, 0.04766469,
+                  0.01502125, 0.13172564, 0.01569176, 0.14237217, 0.02157329]),
+    15: np.array([0.13979292, 0.01622179, 0.15410607, 0.01906199, 0.0225122,
+                  0.02420818, 0.0405614, 0.01004512, 0.13061511, 0.05519855,
+                  0.19225309, 0.10167578, 0.01042928, 0.05529337, 0.01425771]),
+}
+
+af_c_lag = {
+    2: np.array([0.33050874, 0.24791498]),
+    5: np.array([0.18138779, 0.12047442, 0.17614283, 0.23249462, 0.12207124]),
+    10: np.array([0.17993599, 0.07232222, 0.14713354, 0.13452805, 0.04908302,
+                  0.02282418, 0.1310939, 0.01483854, 0.1597476, 0.06767851]),
+    15: np.array([0.11365043, 0.06187371, 0.12562607, 0.02694005, 0.03297123,
+                  0.03731085, 0.05577465, 0.01499486, 0.12170557, 0.06942308,
+                  0.15257909, 0.07568877, 0.01105141, 0.0615434, 0.03416205]),
+}
+
+y_max = max(v.max() for d in (af_c_exposure, af_c_lag) for v in d.values()) * 1.1
+
+
+def plot_af_c(af_c, baseline):
+    n_list = list(af_c)
+
+    save_dir = os.path.join(project_root, "results", "figures", f"AF_c by Model Size ({baseline} Baseline)")
+    os.makedirs(save_dir, exist_ok=True)
+
+    for n, vals in af_c.items():
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(np.arange(n), vals, color="black", marker="o")
+        ax.set_xticks(np.arange(n))
+        ax.set_ylim(0, y_max)
+        ax.set_xlabel("Covariate index")
+        ax.set_ylabel("AF_c")
+        ax.set_title(f"AF_c with {n} covariates, {baseline} baseline (total = {vals.sum():.3f})")
+        plt.savefig(os.path.join(save_dir, f"AF_c_{n}_covs_{baseline.lower()}_baseline."), bbox_inches="tight")
+        plt.close()
+
+    save_dir = os.path.join(project_root, "results", "figures", f"AF_c Evolution ({baseline} Baseline)")
+    os.makedirs(save_dir, exist_ok=True)
+
+    for i in range(n_list[-1]):
+        ns = [n for n in n_list if i < n]
+        vals = [af_c[n][i] for n in ns]
+
+        fig, ax = plt.subplots(figsize=(6, 5))
+        ax.plot(ns, vals, color="black", marker="o")
+        ax.set_xticks(n_list)
+        ax.set_xlim(0, n_list[-1] + 1)
+        ax.set_ylim(0, y_max)
+        ax.set_xlabel("Number of covariates in model")
+        ax.set_ylabel("AF_c")
+        ax.set_title(f"AF_c evolution for covariate {i}, {baseline} baseline")
+        plt.savefig(os.path.join(save_dir, f"AF_c_evolution_cov_{i}_{baseline.lower()}_baseline.pdf"), bbox_inches="tight")
+        plt.close()
+
+
+plot_af_c(af_c_exposure, "Exposure")
+plot_af_c(af_c_lag, "Lag")
+'''
