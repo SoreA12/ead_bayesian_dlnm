@@ -42,7 +42,7 @@ output_dir = os.path.join(project_root, "results", "figures")
 df = pd.read_csv(data_path)
 
 # Select number of covariates to include
-num_covs = 10
+num_covs = 2
 assert num_covs <= df.shape[1] - 2
 df = df.iloc[:, 0 : num_covs + 2]
 
@@ -486,12 +486,13 @@ for c in range(n_covs):
 
     fig,ax = plt.subplots(figsize=(8.3/2, 11.7/4))
 
-    ax.plot(bins, mean, color='black', label='Median')
-    ax.plot(bins, lower, color='black', linestyle='--', label='Lower 5%')
-    ax.plot(bins, upper, color='black', linestyle='--', label='Upper 5%')
-    ax.fill_between(bins, lower, upper, color='black', alpha=0.1)
 
-    #ax.legend()
+    ax.fill_between(bins, lower, upper, color='black', alpha=0.1)
+    ax.plot(bins, lower, color='black', linestyle='--', label='Lower 5%', alpha=0.2)
+    ax.plot(bins, upper, color='black', linestyle='--', label='Upper 5%', alpha=0.2)
+    ax.axhline(1, color='red')
+    ax.plot(bins, mean, color='black', label='Median')
+    
     ax.set_xlabel('Covariate (z-scored)')
     ax.set_ylabel('Cumulative Relative Risk (-)')
 
