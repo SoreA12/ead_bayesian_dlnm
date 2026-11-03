@@ -337,7 +337,11 @@ if num_covs <= 20:
     # assert np.allclose(AF_c, np.sum(AN_daily, axis = 1) / (np.sum(1 + y)), rtol=0, atol=1e-12)
     assert np.sum(AF_c) < 1
 
-print(AF_c)
+    # send to pd.Dataframe
+    csv_out = os.path.join(project_root, "results", "dlnm", "exact_shapley_values.csv")
+    os.makedirs(os.path.dirname(csv_out), exist_ok=True)
+    pd.DataFrame(data=list(zip(X_scaled.columns, AF_c)), columns=['covariate', 'shapley_values']).to_csv(csv_out, index=False)
+
 
 def monte_carlo_shapley(S_ct, n_permutations=10000, seed=1234):
     """
@@ -418,7 +422,10 @@ AF_c = np.sum(AN_daily, axis=1) / np.sum(1.0 + y)
 # exact:       [0.11821673 0.06087059 0.12778429 0.02756671 0.02674704 0.0367049 0.05151903 0.01221426 0.11725284 0.06819043 0.16408098 0.08043039 0.01072719 0.06039525 0.03432672]
 # monte carlo: [0.11793963 0.062103   0.12737304 0.02778221 0.02647399 0.03657329 0.05167945 0.01227323 0.11671993 0.0682352  0.16403991 0.07969737 0.01058205 0.06161253 0.03394249]
 
-print(AF_c)
+# send to pd.Dataframe
+csv_out = os.path.join(project_root, "results", "dlnm", "permutation_monte_carlo_shapley_values.csv")
+os.makedirs(os.path.dirname(csv_out), exist_ok=True)
+pd.DataFrame(data=list(zip(X_scaled.columns, AF_c)), columns=['covariate', 'shapley_values']).to_csv(csv_out, index=False)
 
 
 # Visualise the lag-exposure surfaces with minimal risk line
@@ -571,7 +578,6 @@ for c in range(n_covs):
     upper = np.quantile(cumulative_relative_risk, q=0.95, axis=0)
 
     fig,ax = plt.subplots(figsize=(8.3/2, 11.7/4))
-
 
     ax.fill_between(bins, lower, upper, color='black', alpha=0.1)
     ax.plot(bins, lower, color='black', linestyle='--', label='Lower 5%', alpha=0.2)
