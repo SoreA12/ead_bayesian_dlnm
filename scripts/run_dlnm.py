@@ -42,7 +42,7 @@ output_dir = os.path.join(project_root, "results", "figures")
 df = pd.read_csv(data_path)
 
 # Select number of covariates to include
-num_covs = 10
+num_covs = 30
 assert num_covs <= df.shape[1] - 2
 df = df.iloc[:, 0 : num_covs + 2]
 
@@ -183,7 +183,7 @@ with nhs_model:
 
 with nhs_model:
     trace = pm.sample(
-        draws=150, tune=150, chains=2, progressbar=True, target_accept=0.8,  
+        draws=250, tune=1000, chains=4, progressbar=True, target_accept=0.8,  
         init='adapt_diag',                                                              
         initvals=map_est,
     )
@@ -343,7 +343,7 @@ if num_covs <= 20:
     pd.DataFrame(data=list(zip(X_scaled.columns, AF_c)), columns=['covariate', 'shapley_values']).to_csv(csv_out, index=False)
 
 
-def monte_carlo_shapley(S_ct, n_permutations=10000, seed=1234):
+def monte_carlo_shapley(S_ct, n_permutations=100000, seed=1234):
     """
     Monte Carlo Shapley attribution by permutation sampling with online mean and variance calculation using Welford's algorithm
 
@@ -594,9 +594,6 @@ for c in range(n_covs):
     file_name = f"Cumulative_relative_risk_{X_scaled.columns[c]}.svg"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
     plt.close()
-
-import sys
-sys.exit()
 
 
 # Assess out-of-sample forecasting accuracy
