@@ -103,7 +103,7 @@ X_train = X_df_train['covariate_value'].values.reshape(len(X_df_train['t'].uniqu
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 n_times, n_lags, n_covs = X_final.shape
-bins = np.arange(-5, 5, 0.1)
+bins = np.arange(-4, 4, 0.1)
 n_bins = len(bins)
 
 K = np.digitize(X_final, bins) - 1
@@ -121,9 +121,8 @@ B_prime = np.asarray(B_prime)
 # One idea: Define a vector B_prime_vec, s.t. B_prime_vec[i] represents the ith B_prime matrix?
 # Could we run a simple correlation to see the direction of each covariate to avoidable deaths then define each baseline manually (smallest bin, mean, largest bin)
 # I'm not sure if the B_prime_vec[i] idea would work. It would essentially add another dimension to B_prime
-B_prime_center = B_prime[50]
+B_prime_center = B_prime[40]
 B_prime = B_prime - B_prime_center[None, :]
-
 
 
 # Build the pyMC model
