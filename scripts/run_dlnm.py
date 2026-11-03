@@ -42,7 +42,7 @@ output_dir = os.path.join(project_root, "results", "figures")
 df = pd.read_csv(data_path)
 
 # Select number of covariates to include
-num_covs = 2
+num_covs = 10
 assert num_covs <= df.shape[1] - 2
 df = df.iloc[:, 0 : num_covs + 2]
 
@@ -229,8 +229,8 @@ plt.savefig(os.path.join(output_dir, 'goodness-of-fit_training.svg'), bbox_inche
 plt.close()
 
 
-# Shapley attribution
-# ~~~~~~~~~~~~~~~~~~~
+# Risk surface rescaling with minimum risk walk
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # This chunk gets S_ct, where we get the centered (excess) risk for covariate c on day t
 # cumulatively for all lags [t-L, t-L+1,...,t]
@@ -259,14 +259,12 @@ for c in range(n_covs):
                 
     else:
         
-
         surface_baseline = surface.copy()
         
         for l in range(n):
             
             min_for_lag_l = np.min(surface[l])
             surface_baseline[l] = surface_baseline[l] - min_for_lag_l
-
     
     if each_exposure:
         
@@ -274,7 +272,6 @@ for c in range(n_covs):
         baseline_vec = surface[:, min_index]
         surface_baseline = surface - baseline_vec[:, np.newaxis]
         #surface_baseline = surface
-        
     
     for t in range(n_times):
         S_t = 0
@@ -289,51 +286,140 @@ C, T = S_ct.shape
 AF_daily = np.empty((n_covs, n_times))
 AN_daily = np.empty((n_covs, n_times))
 
-# S_ct is the centered cumulative log risk
-# v_St is the joint attributable risk fraction for coalition S on day t
-# phi_t is the AF for covariate c on day t based on the weighted sums of the difference
-# in joint AF betwween a coalition with c and that coalition without c
+# Shapley attribution (exact and permutation monte carlo)
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-for t in range(T):
-    
-    y_t = y[t]
-    S_c = S_ct[:, t]
-    v_map = {}
-    
-    for r in range(C + 1):
+# exact only when tracteable
+if num_covs <= 20:
 
-        combos = itertools.combinations(np.arange(S_c.shape[0]), r)
+    # S_ct is the centered cumulative log risk
+    # v_St is the joint attributable risk fraction for coalition S on day t
+    # phi_t is the AF for covariate c on day t based on the weighted sums of the difference
+    # in joint AF betwween a coalition with c and that coalition without c
+
+    for t in range(T):
         
-        for combo in combos:
+        y_t = y[t]
+        S_c = S_ct[:, t]
+        v_map = {}
+        
+        for r in range(C + 1):
+
+            combos = itertools.combinations(np.arange(S_c.shape[0]), r)
             
-            subset_S_ct = np.sum(S_c[list(combo)])
-            v_St = 1.0 - np.exp(-subset_S_ct)
-            v_map[combo] = v_St
-            
-    for c in range(C):
-        
-        phi_t = 0
-        other_covs = [i for i in range(C) if i != c]
-        
-        for r in range(C):
+            for combo in combos:
                 
-            for combo in itertools.combinations(other_covs, r):
+                subset_S_ct = np.sum(S_c[list(combo)])
+                v_St = 1.0 - np.exp(-subset_S_ct)
+                v_map[combo] = v_St
+                
+        for c in range(C):
+            
+            phi_t = 0
+            other_covs = [i for i in range(C) if i != c]
+            
+            for r in range(C):
                     
-                v_without = v_map[combo]
-                indices_plus_c = tuple(sorted(combo + (c,)))
-                v_with = v_map[indices_plus_c]
-                weight = math.factorial(len(combo)) * math.factorial(C - len(combo) - 1) / math.factorial(C)
-                marginal_gain = (v_with - v_without) * weight
-                phi_t += marginal_gain
-                
-        AF_daily[c, t] = phi_t
-        AN_daily[c, t] = phi_t * y_t
-        AF_c = np.sum(AN_daily, axis=1) / np.sum(y)
-        
-assert np.allclose(np.sum(AF_daily, axis=0), 1 - np.exp(-np.sum(S_ct, axis=0)), rtol=0, atol=1e-12)
-# assert np.allclose(AF_c, np.sum(AN_daily, axis = 1) / (np.sum(1 + y)), rtol=0, atol=1e-12)
-assert np.sum(AF_c) < 1
-        
+                for combo in itertools.combinations(other_covs, r):
+                        
+                    v_without = v_map[combo]
+                    indices_plus_c = tuple(sorted(combo + (c,)))
+                    v_with = v_map[indices_plus_c]
+                    weight = math.factorial(len(combo)) * math.factorial(C - len(combo) - 1) / math.factorial(C)
+                    marginal_gain = (v_with - v_without) * weight
+                    phi_t += marginal_gain
+                    
+            AF_daily[c, t] = phi_t
+            AN_daily[c, t] = phi_t * y_t
+            AF_c = np.sum(AN_daily, axis=1) / np.sum(y)
+            
+    assert np.allclose(np.sum(AF_daily, axis=0), 1 - np.exp(-np.sum(S_ct, axis=0)), rtol=0, atol=1e-12)
+    # assert np.allclose(AF_c, np.sum(AN_daily, axis = 1) / (np.sum(1 + y)), rtol=0, atol=1e-12)
+    assert np.sum(AF_c) < 1
+
+print(AF_c)
+
+def monte_carlo_shapley(S_ct, n_permutations=10000, seed=1234):
+    """
+    Monte Carlo Shapley attribution by permutation sampling with online mean and variance calculation using Welford's algorithm
+
+    Vectorized over the time index
+
+    Permutation Monte Carlo Shapley values: https://www.emergentmind.com/topics/monte-carlo-shapley-value-estimation
+    Welford's algorithm: https://changyaochen.github.io/welford/
+
+    Parameters
+    ----------
+    S_ct : ndarray, shape (n_covs, n_times)
+        Centered cumulative log-risk contributions.
+    n_permutations : int
+        Number of random permutations to sample. Recommend running 100000 samples for more than 20 covariates.
+    seed : int
+        Random seed.
+
+    Returns
+    -------
+    phi_mean : ndarray, shape (n_covs, n_times)
+        Estimated Shapley values.
+    phi_se : ndarray, shape (n_covs, n_times)
+        Monte Carlo standard errors.
+    """
+
+    C, T = S_ct.shape
+    rng = np.random.default_rng(seed)
+
+    # online estimation of mean and variance
+    phi_mean = np.zeros((C, T))
+    phi_M2 = np.zeros((C, T))
+
+    for m in range(1, n_permutations + 1):
+
+        permutation = rng.permutation(C)
+
+        # contributions for this permutation
+        phi_perm = np.zeros((C, T))
+
+        # cumulative log-risk of preceding covariates
+        cumulative_risk = np.zeros(T)
+
+        for c in permutation:
+
+            # marginal contribution of covariate c
+            marginal_gain = np.exp(-cumulative_risk) * (-np.expm1(-S_ct[c]))
+            phi_perm[c] = marginal_gain
+
+            # update cumulative risk
+            cumulative_risk += S_ct[c]
+
+        # online mean and variance (Welford's algorithm)
+        delta = phi_perm - phi_mean
+        phi_mean += delta / m
+        phi_M2 += delta * (phi_perm - phi_mean)
+
+    # compute Monte Carlo standard error
+    phi_se = np.sqrt(phi_M2 / (n_permutations - 1) / n_permutations)
+
+    return phi_mean, phi_se
+
+# compute permutation monte carlo shapley approach
+AF_daily, AF_se = monte_carlo_shapley(
+    S_ct,
+    n_permutations=10000,
+    seed=1234
+)
+
+# attributable numbers
+AN_daily = AF_daily * (1.0 + y[np.newaxis, :])
+
+# overall attributable fraction
+AF_c = np.sum(AN_daily, axis=1) / np.sum(1.0 + y)
+
+# For 15 covariates --> exact results and permutation monte-carlo don't differ by much with 10000 samples
+# exact:       [0.11821673 0.06087059 0.12778429 0.02756671 0.02674704 0.0367049 0.05151903 0.01221426 0.11725284 0.06819043 0.16408098 0.08043039 0.01072719 0.06039525 0.03432672]
+# monte carlo: [0.11793963 0.062103   0.12737304 0.02778221 0.02647399 0.03657329 0.05167945 0.01227323 0.11671993 0.0682352  0.16403991 0.07969737 0.01058205 0.06161253 0.03394249]
+
+print(AF_c)
+
 
 # Visualise the lag-exposure surfaces with minimal risk line
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
