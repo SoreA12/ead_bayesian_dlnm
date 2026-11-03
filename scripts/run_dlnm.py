@@ -42,7 +42,7 @@ output_dir = os.path.join(project_root, "results", "figures")
 df = pd.read_csv(data_path)
 
 # Select number of covariates to include
-num_covs = 5
+num_covs = 15
 assert num_covs <= df.shape[1] - 2
 df = df.iloc[:, 0 : num_covs + 2]
 
@@ -209,11 +209,11 @@ with pm.Model(coords=coords) as nhs_model:
     tau_covariate = pm.Exponential("tau_covariate", scale=1, shape=n_covs)
 
     # Unpenalized component
-    alpha = pm.Normal("alpha", mu=0, sigma=0.1, shape=(n_null, n_covs))
+    alpha = pm.Normal("alpha", mu=0, sigma=1, shape=(n_null, n_covs))
 
     # Separate smoothing parameters
-    sigma_rw2_lag = 0.01
-    sigma_rw2_exposure = 0.01
+    sigma_rw2_lag = 0.005
+    sigma_rw2_exposure = 0.005
 
     # Joint precision matrix in the penalized subspace
     K_penalized = K_lag_plus / sigma_rw2_lag**2 + K_exposure_plus / sigma_rw2_exposure**2
@@ -256,7 +256,7 @@ with nhs_model:
 # ~~~~~~~~~~~~~~~~~~~~~
 with nhs_model:
     trace = pm.sample(
-        draws=150, tune=150, chains=2, progressbar=True, target_accept=0.8,  
+        draws=100, tune=250, chains=2, progressbar=True, target_accept=0.85,  
         init='adapt_diag',                                                              
         initvals=map_est,
     )
