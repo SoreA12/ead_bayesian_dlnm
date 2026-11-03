@@ -42,7 +42,7 @@ output_dir = os.path.join(project_root, "results", "figures")
 df = pd.read_csv(data_path)
 
 # Select number of covariates to include
-num_covs = 10
+num_covs = 2
 assert num_covs <= df.shape[1] - 2
 df = df.iloc[:, 0 : num_covs + 2]
 
@@ -57,7 +57,7 @@ y_df['dt'] = pd.to_datetime(y_df['dt'])
 y_df['t'] = np.arange(len(y_df))
 y_df['day'] = y_df['dt'].dt.day_of_week
 y_df['y_obs'] = df['estimated_avoidable_deaths']
-y_df['log_y_obs'] = np.log1p(y_df['y_obs'])
+y_df['log_y_obs'] = np.log(y_df['y_obs'])
 
 X_scaled = df.drop(columns=['operational_day', 'estimated_avoidable_deaths'])
 X_scaled_values = X_scaled.values
@@ -103,7 +103,7 @@ X_train = X_df_train['covariate_value'].values.reshape(len(X_df_train['t'].uniqu
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 n_times, n_lags, n_covs = X_final.shape
-bins = np.arange(-5, 5, 0.1)
+bins = np.arange(-4, 4, 0.1)
 n_bins = len(bins)
 
 K = np.digitize(X_final, bins) - 1
@@ -121,9 +121,8 @@ B_prime = np.asarray(B_prime)
 # One idea: Define a vector B_prime_vec, s.t. B_prime_vec[i] represents the ith B_prime matrix?
 # Could we run a simple correlation to see the direction of each covariate to avoidable deaths then define each baseline manually (smallest bin, mean, largest bin)
 # I'm not sure if the B_prime_vec[i] idea would work. It would essentially add another dimension to B_prime
-B_prime_center = B_prime[50]
+B_prime_center = B_prime[40]
 B_prime = B_prime - B_prime_center[None, :]
-
 
 
 # Build the pyMC model
@@ -178,8 +177,10 @@ with nhs_model:
         return_raw=True,
     )
 
+
 # Sample the pyMC model
 # ~~~~~~~~~~~~~~~~~~~~~
+
 with nhs_model:
     trace = pm.sample(
         draws=150, tune=150, chains=2, progressbar=True, target_accept=0.8,  
@@ -201,6 +202,10 @@ for var in ["mu0", "A", "gamma", "sigma_obs"]:
 summary = az.summary(trace, var_names=["mu0", "A", "gamma", "sigma_obs"])
 summary.to_csv(os.path.join(output_dir, 'trace-summary.csv'), index=True)
 
+
+# Save the training goodness-of-fit
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 # Training goodness-of-fit plot
 post_pred = train.posterior_predictive["obs"].median(dim=['chain','draw'])
 lower = train.posterior_predictive["obs"].quantile(q=0.025, dim=['chain', 'draw'])
@@ -208,13 +213,13 @@ upper = train.posterior_predictive["obs"].quantile(q=0.975, dim=['chain', 'draw'
 
 plt.figure(figsize=(14, 6))
 
-plt.plot(y_df_train['dt'], y_df_train['log_y_obs'], label="Actual (Log-Deaths)", color="black", alpha=0.6, linewidth=1)
-plt.plot(post_pred.coords['date'], post_pred, label="Model Median", color="blue", linewidth=1.5)
-plt.fill_between(lower.coords['date'], lower, upper, color="blue", alpha=0.15, label="95% HDI")
-plt.plot(post_pred.coords['date'], trace.posterior["mu_seasonal"].median(dim=['chain', 'draw']), color='red', linewidth=1.5, label="Seasonal median")
+plt.plot(y_df_train['dt'], np.exp(y_df_train['log_y_obs']), label="Data", color="black", alpha=0.6, linewidth=1)
+plt.plot(post_pred.coords['date'], np.exp(post_pred), label="Model Median", color="blue", linewidth=1.5)
+plt.fill_between(lower.coords['date'], np.exp(lower), np.exp(upper), color="blue", alpha=0.15, label="95% HDI")
+plt.plot(post_pred.coords['date'], np.exp(trace.posterior["mu_seasonal"].median(dim=['chain', 'draw'])), color='red', linewidth=1.5, label="Seasonal median")
 
 plt.xlabel("Date")
-plt.ylabel("ln1p(Avoidable Deaths)")
+plt.ylabel("Avoidable Deaths (-)")
 plt.title("NHS Deaths: Model Fit (March 2023 - Sept 2025)")
 plt.legend()
 
@@ -223,6 +228,9 @@ plt.gcf().autofmt_xdate()
 plt.savefig(os.path.join(output_dir, 'goodness-of-fit_training.svg'), bbox_inches='tight', pad_inches=0.02)
 plt.close()
 
+
+# Shapley attribution
+# ~~~~~~~~~~~~~~~~~~~
 
 # This chunk gets S_ct, where we get the centered (excess) risk for covariate c on day t
 # cumulatively for all lags [t-L, t-L+1,...,t]
@@ -243,11 +251,11 @@ for c in range(n_covs):
         # Look at more covariates
         
         for e in range(n_prime):
-            log1p_RR = np.sum(surface[:, e]) 
+            log_RR = np.sum(surface[:, e]) 
             # also try np.sum(surface[l, :]), use an if statement to switch
             # maybe plot the trajectory of least risk (both for per lag min and per exposure min)
             # Look into the interpretations of Shapley values
-            sum_RRs.append(log1p_RR)
+            sum_RRs.append(log_RR)
                 
     else:
         
@@ -281,7 +289,7 @@ C, T = S_ct.shape
 AF_daily = np.empty((n_covs, n_times))
 AN_daily = np.empty((n_covs, n_times))
 
-# S_ct is the centered cumulative log1p risk
+# S_ct is the centered cumulative log risk
 # v_St is the joint attributable risk fraction for coalition S on day t
 # phi_t is the AF for covariate c on day t based on the weighted sums of the difference
 # in joint AF betwween a coalition with c and that coalition without c
@@ -319,22 +327,24 @@ for t in range(T):
                 phi_t += marginal_gain
                 
         AF_daily[c, t] = phi_t
-        AN_daily[c, t] = phi_t * (1.0 + y_t) 
-        AF_c = np.sum(AN_daily, axis=1) / np.sum(1 + y)
+        AN_daily[c, t] = phi_t * y_t
+        AF_c = np.sum(AN_daily, axis=1) / np.sum(y)
         
 assert np.allclose(np.sum(AF_daily, axis=0), 1 - np.exp(-np.sum(S_ct, axis=0)), rtol=0, atol=1e-12)
 # assert np.allclose(AF_c, np.sum(AN_daily, axis = 1) / (np.sum(1 + y)), rtol=0, atol=1e-12)
 assert np.sum(AF_c) < 1
         
 
-           
-# Plotting a walk along the lag dimension for each cov finding min risk path 
+# Visualise the lag-exposure surfaces with minimal risk line
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Surface plot
 save_dir = os.path.join(project_root, "results", "figures", "Lag-Exposure Baseline")
 os.makedirs(save_dir, exist_ok=True)
 
 for c in range(n_covs):
     gamma_mean = trace.posterior["gamma"].mean(("chain", "draw")).values
-    surface = B @ gamma_mean[:, :, c] @ B_prime.T
+    surface = np.exp(B @ gamma_mean[:, :, c] @ B_prime.T) # exp of surface is directly interpretable as Relative Risk (-) vs. chosen intercept
     n_lags_dim, n_bins_dim = surface.shape
 
     # Extract path of lowest risk across lags
@@ -371,18 +381,18 @@ for c in range(n_covs):
         zorder=10,
     )
 
-    ax.set_xlabel("Covariate Values")
-    ax.set_ylabel("Lags")
-    ax.set_zlabel("Log-Relative Risk")
+    ax.set_xlabel("Covariate (z-scored)")
+    ax.set_ylabel("Lag (days)")
+    ax.set_zlabel("Relative Risk (-)")
     ax.legend(loc="upper right")
-    plt.title(f"Surface for {X_scaled.columns[c]}")
+    plt.title(f"{X_scaled.columns[c]}")
 
     file_name = f"Lag_Exposure_Surface_Baseline_for_{X_scaled.columns[c]}_{np.round(AF_c[c], 3)}.svg"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches="tight")
     plt.close()
             
 
-
+# Heatmap
 save_dir = os.path.join(project_root, "results", "figures", "Lag-Exposure Baseline 2D")
 os.makedirs(save_dir, exist_ok=True)
 
@@ -391,101 +401,115 @@ for c in range(n_covs):
     surface = B @ gamma_mean[:, :, c] @ B_prime.T
 
     plt.imshow(surface, extent=[bins[0], bins[-1], 0, surface.shape[0]], cmap='viridis', aspect='auto', origin='lower')
-    plt.colorbar(label="Log-Relative Risk")
+    plt.colorbar(label="Relative Risk (-)")
     
     plt.plot(bins[np.argmin(surface, axis=1)], np.arange(surface.shape[0]) + 0.5, 'ro-', markersize=4, label="Path of lowest risk")
 
-    plt.xlabel('Covariate Values')
-    plt.ylabel('Lags')
-    plt.title(f"Baseline 2D Surface: {X_scaled.columns[c]}")
+    plt.xlabel('Covariate (z-scored)')
+    plt.ylabel('Lag (days)')
+    plt.title(f"Relative Risk: {X_scaled.columns[c]}")
     plt.legend()
     
     plt.savefig(os.path.join(save_dir, f"Lag_Exposure_Baseline_2D_{X_scaled.columns[c]}.svg"), bbox_inches='tight')
     plt.close()
 
 
+# Visualise the lag-exposure surfaces without the minimal risk line
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-# Visualise the lag-exposure surfaces
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
+# Surface
 for c in range(n_covs):
     save_dir = os.path.join(project_root, "results", "figures", "Lag-Exposure Surfaces")
     os.makedirs(save_dir, exist_ok=True)
     
     gamma_mean = trace.posterior["gamma"].mean(("chain","draw")).values
-    surface = B @ gamma_mean[:,:,c] @ B_prime.T
+    surface = np.exp(B @ gamma_mean[:,:,c] @ B_prime.T)
     plot_lags, plot_bins = np.meshgrid(N, bins, indexing='ij')
     
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
     ax.plot_surface(plot_bins, plot_lags, surface, cmap='coolwarm', edgecolor='k', linewidth=0.2)
     
-    ax.set_xlabel('covariate values')
-    ax.set_ylabel('lags')
-    ax.set_zlabel('values')
+    ax.set_xlabel('Covariate (z-scored)')
+    ax.set_ylabel('Lag (days)')
+    ax.set_zlabel('Relative Risk (-)')
 
-    plt.title(f"Surface for {X_scaled.columns[c]}")
+    plt.title(f"{X_scaled.columns[c]}")
     file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_{np.round(AF_c[c], 3)}.svg"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
     plt.close()
     
-    
+# Heatmap
 for c in range(n_covs):
     save_dir = os.path.join(project_root, "results", "figures", "Lag-Exposure Surfaces 2D")
     os.makedirs(save_dir, exist_ok=True)
 
     gamma_mean = trace.posterior["gamma"].mean(("chain","draw")).values
-    surface = B @ gamma_mean[:,:,c] @ B_prime.T
+    surface = np.exp(B @ gamma_mean[:,:,c] @ B_prime.T)
 
     plt.imshow(surface, extent=[-5,5,0,surface.shape[0]],cmap='viridis', aspect='auto')
-    plt.colorbar()
-    plt.xlabel('covariate values')
-    plt.ylabel('lags')
-    plt.title(f"Surface for {X_scaled.columns[c]}")
+    plt.colorbar(label="Relative Risk (-)")
+    plt.xlabel('Covariate (z-scored)')
+    plt.ylabel('Lag (days)')
+    plt.title(f"{X_scaled.columns[c]}")
     
     file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_2D.svg"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
     plt.close()
 
-# (n, m) @ (m, m_prime) @ (m_prime, n_prime) --> (n, n_prime)
-gamma_draws = trace.posterior["gamma"].stack(sample=("chain", "draw")).transpose("sample", ...).values
-surface_draws = np.einsum('nm,smpc,kp->scnk', B, gamma_draws, B_prime)
-surface_mean = surface_draws.mean(axis=0)
-surface_lower, surface_upper = np.quantile(surface_draws, [0.025, 0.975], axis=0)
 
-save_dir = os.path.join(project_root, "results", "figures", "1D Exposure Curves")
-os.makedirs(save_dir, exist_ok=True)
+# Visualise the cumulative Relative Risk (-) + 95% CI (sum surface across lags aligining posterior samples)
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 for c in range(n_covs):
-    for b in range(n_lags):
-        fig, ax = plt.subplots(figsize=(6, 6))
-        ax.fill_between(bins, surface_lower[c, b], surface_upper[c, b], color="pink", lw=0, zorder=1)
-        ax.plot(bins, surface_mean[c, b], color="black", marker="o", zorder=5)
-        ax.set_xlabel('covariate value')
-        ax.set_ylabel('log-relative risk')
-        plt.title(f"1D Curve for {X_scaled.columns[c]} on Lag {b}")
-        file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_lag_{b}.svg"
-        plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
-        plt.close()
-        
-# (n, m) @ (m, m_prime) @ (m_prime, n_prime) --> (n, n_prime)
-save_dir = os.path.join(project_root, "results", "figures", "1D Lag Curves")
-os.makedirs(save_dir, exist_ok=True)
 
-for c in range(n_covs):
-    for a in range(n_bins):
-        fig, ax = plt.subplots(figsize=(6, 6))
-        ax.fill_between(N, surface_lower[c, :, a], surface_upper[c, :, a], color="yellow", lw=0, zorder=1)
-        ax.plot(N, surface_mean[c, :, a], color="black", marker="o", zorder=5)
-        ax.set_xlabel('lag')
-        ax.set_ylabel('log-relative risk')
-        plt.title(f"1D Curve for {X_scaled.columns[c]} at exposure {bins[a]:.1f}")
-        file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_bin_{a+1}.svg"
-        plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
-        plt.close()
+    save_dir = os.path.join(project_root, "results", "figures", "Cumulative relative risk")
+    os.makedirs(save_dir, exist_ok=True)
+
+    save = []
+    for chain in trace.posterior.coords['chain']:
+        for draw in trace.posterior.coords['draw']:
+
+            gamma_sample = trace.posterior["gamma"].values[chain, draw, ...]
+
+            surface = B @ gamma_sample[:,:,c] @ B_prime.T
+
+            cumulative_relative_risk = np.exp(np.sum(surface, axis=0))
+
+            save.append(cumulative_relative_risk)
+
+    cumulative_relative_risk = np.stack(save)
+
+    mean =  np.median(cumulative_relative_risk, axis=0)
+    lower = np.quantile(cumulative_relative_risk, q=0.05, axis=0)
+    upper = np.quantile(cumulative_relative_risk, q=0.95, axis=0)
+
+    fig,ax = plt.subplots(figsize=(8.3/2, 11.7/4))
+
+
+    ax.fill_between(bins, lower, upper, color='black', alpha=0.1)
+    ax.plot(bins, lower, color='black', linestyle='--', label='Lower 5%', alpha=0.2)
+    ax.plot(bins, upper, color='black', linestyle='--', label='Upper 5%', alpha=0.2)
+    ax.axhline(1, color='red')
+    ax.plot(bins, mean, color='black', label='Median')
+    
+    ax.set_xlabel('Covariate (z-scored)')
+    ax.set_ylabel('Cumulative Relative Risk (-)')
+
+    plt.title(f"{X_scaled.columns[c]}", fontsize=10)
+    plt.tight_layout()
+
+    file_name = f"Cumulative_relative_risk_{X_scaled.columns[c]}.svg"
+    plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
+    plt.close()
+
+import sys
+sys.exit()
+
 
 # Assess out-of-sample forecasting accuracy
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 # Evaluate forecast accuracy out-of-sample
 def plot_window_trajectory(train, forecast, y_df_test, dt_test, anchor_date, null_forecast, null_score=None, model_score=None):
     save_dir = os.path.join(project_root, "results", "figures", "forecasts")
@@ -498,33 +522,33 @@ def plot_window_trajectory(train, forecast, y_df_test, dt_test, anchor_date, nul
     plt.figure(figsize=(14, 6))
 
     # Historical Training Data & Fit
-    plt.plot(dates_train[-show_n_tr:], np.expm1(train.observed_data['obs'].values[-show_n_tr:]), color="black", linewidth=2.5)
-    plt.plot(dates_train[-show_n_tr:], np.expm1(train.posterior_predictive['obs'].median(dim=['chain','draw']).values[-show_n_tr:]), color="black", linewidth=0.5)
+    plt.plot(dates_train[-show_n_tr:], np.exp(train.observed_data['obs'].values[-show_n_tr:]), color="black", linewidth=2.5)
+    plt.plot(dates_train[-show_n_tr:], np.exp(train.posterior_predictive['obs'].median(dim=['chain','draw']).values[-show_n_tr:]), color="black", linewidth=0.5)
     
     plt.fill_between(dates_train[-show_n_tr:],
-                     np.expm1(train.posterior_predictive['obs'].quantile(q=0.025, dim=['chain','draw']).values[-show_n_tr:]),
-                     np.expm1(train.posterior_predictive['obs'].quantile(q=0.975, dim=['chain','draw']).values[-show_n_tr:]),
+                     np.exp(train.posterior_predictive['obs'].quantile(q=0.025, dim=['chain','draw']).values[-show_n_tr:]),
+                     np.exp(train.posterior_predictive['obs'].quantile(q=0.975, dim=['chain','draw']).values[-show_n_tr:]),
                      color="black", alpha=0.05)
     plt.fill_between(dates_train[-show_n_tr:],
-                     np.expm1(train.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw']).values[-show_n_tr:]),
-                     np.expm1(train.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw']).values[-show_n_tr:]),
+                     np.exp(train.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw']).values[-show_n_tr:]),
+                     np.exp(train.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw']).values[-show_n_tr:]),
                      color="black", alpha=0.15)
 
     # Data Gap Connection
     gap_dates = (y_df['dt'] >= dates_train[-1]) & (y_df['dt'] <= dates_test[0])
-    plt.plot(y_df.loc[gap_dates, 'dt'], np.expm1(y_df.loc[gap_dates, 'log_y_obs']), color="blue", linewidth=2.5)
+    plt.plot(y_df.loc[gap_dates, 'dt'], np.exp(y_df.loc[gap_dates, 'log_y_obs']), color="blue", linewidth=2.5)
 
     # Out-of-Sample Test Evaluation
-    plt.plot(dates_test, np.expm1(y_df_test['log_y_obs'].values), linestyle=':', color="black", linewidth=2.5)
-    plt.plot(dates_test, np.expm1(forecast.posterior_predictive['obs'].median(dim=['chain','draw'])), color="red", linewidth=1.5)
+    plt.plot(dates_test, np.exp(y_df_test['log_y_obs'].values), linestyle=':', color="black", linewidth=2.5)
+    plt.plot(dates_test, np.exp(forecast.posterior_predictive['obs'].median(dim=['chain','draw'])), color="red", linewidth=1.5)
     
     plt.fill_between(dates_test,
-                     np.expm1(forecast.posterior_predictive['obs'].quantile(q=0.025, dim=['chain','draw'])),
-                     np.expm1(forecast.posterior_predictive['obs'].quantile(q=0.975, dim=['chain','draw'])),
+                     np.exp(forecast.posterior_predictive['obs'].quantile(q=0.025, dim=['chain','draw'])),
+                     np.exp(forecast.posterior_predictive['obs'].quantile(q=0.975, dim=['chain','draw'])),
                      color="red", alpha=0.05)
     plt.fill_between(dates_test,
-                     np.expm1(forecast.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw'])),
-                     np.expm1(forecast.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw'])),
+                     np.exp(forecast.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw'])),
+                     np.exp(forecast.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw'])),
                      color="red", alpha=0.15)
 
     # Baseline Model
@@ -633,7 +657,7 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
             forecast = pm.sample_posterior_predictive(trace, sample_vars=["obs"], progressbar=False)
 
         # Compute forecast MSE
-        y_pred = np.expm1(forecast["posterior_predictive/obs"].median(dim=['chain', 'draw']).sel(date=forecast_eval_dates)).values
+        y_pred = np.exp(forecast["posterior_predictive/obs"].median(dim=['chain', 'draw']).sel(date=forecast_eval_dates)).values
         
         mse_model_1_5 = (1 / 5) * np.sum((y_actual[0:5] - y_pred[0:5])**2)
         mse_model_6_10 = (1 / 5) * np.sum((y_actual[5:10] - y_pred[5:10])**2)
