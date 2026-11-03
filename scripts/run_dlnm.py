@@ -21,8 +21,8 @@ n_data_lag = 3
 training_end_date = datetime(2025, 9, 30)
 # Drop degree to 2, dropping M to 3
 # Look for some literature for Shapley Values and if it has been implemented with attributable risk for any kind of model
-M = 3
-M_prime = 4
+M = 10
+M_prime = 10
 
 # derived from settings
 last_training_data_date = training_end_date - timedelta(days=n_data_lag)
@@ -42,7 +42,7 @@ output_dir = os.path.join(project_root, "results", "figures")
 df = pd.read_csv(data_path)
 
 # Select number of covariates to include
-num_covs = 25
+num_covs = 5
 assert num_covs <= df.shape[1] - 2
 df = df.iloc[:, 0 : num_covs + 2]
 
@@ -57,7 +57,7 @@ y_df['dt'] = pd.to_datetime(y_df['dt'])
 y_df['t'] = np.arange(len(y_df))
 y_df['day'] = y_df['dt'].dt.day_of_week
 y_df['y_obs'] = df['estimated_avoidable_deaths']
-y_df['log_y_obs'] = np.log1p(y_df['y_obs'])
+y_df['log_y_obs'] = np.log(y_df['y_obs'])
 
 X_scaled = df.drop(columns=['operational_day', 'estimated_avoidable_deaths'])
 X_scaled_values = X_scaled.values
@@ -110,7 +110,7 @@ K = np.digitize(X_final, bins) - 1
 K_train = np.digitize(X_train, bins) - 1
 
 N = np.sort(np.abs(X_df_train['lag'].unique()))
-B = patsy.dmatrix("bs(N, df=M, degree=2, include_intercept=True) - 1", {"N": N})
+B = patsy.dmatrix("bs(N, df=M, degree=3, include_intercept=True) - 1", {"N": N})
 B = np.asarray(B)
 
 N_prime = bins
@@ -118,8 +118,8 @@ B_prime = patsy.dmatrix("bs(N_prime, df=M_prime, degree=3, include_intercept=Tru
 B_prime = np.asarray(B_prime)
 
 # force intercept at x=0
-# B_prime_center = B_prime[50]
-# B_prime = B_prime - B_prime_center[None, :]
+#B_prime_center = B_prime[50]
+#B_prime = B_prime - B_prime_center[None, :]
 
 # Possible alternative:
 # implement an integrate-to-zero constraint on the cross basis to remove the offset
@@ -138,6 +138,37 @@ w = np.outer(w_l, w_x).ravel()  # (M x M_prime,)
 # compute the null-space basis (find Q so that w @ Q = 0)
 Q = scipy.linalg.null_space(w[None, :])     # (M x M_prime, M x M_prime - 1) --> one degree of freedom removed by integrate-to-one constraint --> try: w @ Q = 0 
 
+# Construct second-order difference matrices
+D2_lag = np.diff(np.eye(M), n=2, axis=0)
+D2_exposure = np.diff(np.eye(M_prime), n=2, axis=0)
+
+# Construct tensor-product penalty matrices
+P_lag = np.kron(
+    D2_lag.T @ D2_lag,
+    np.eye(M_prime)
+)
+
+P_exposure = np.kron(
+    np.eye(M),
+    D2_exposure.T @ D2_exposure
+)
+
+# Project penalties into integrate-to-zero constrained space
+K_lag = Q.T @ P_lag @ Q
+K_exposure = Q.T @ P_exposure @ Q
+
+# Identify unpenalized subspace
+K_null = K_lag + K_exposure
+
+U0 = scipy.linalg.null_space(K_null)
+
+# Identify penalized subspace (orthogonal complement)
+U_plus = scipy.linalg.null_space(U0.T)
+
+# Project individual penalties into penalized subspace
+K_lag_plus = U_plus.T @ K_lag @ U_plus
+K_exposure_plus = U_plus.T @ K_exposure @ U_plus
+
 
 # Build the pyMC model
 # ~~~~~~~~~~~~~~~~~~~~
@@ -151,10 +182,6 @@ coords = {
     "b_functions_lags": np.arange(M),
     "bins": bins, 
         }
-
-# Second-order difference matrices
-D2_lag = np.diff(np.eye(M), n=2, axis=0)
-D2_exposure = np.diff(np.eye(M_prime), n=2, axis=0)
 
 with pm.Model(coords=coords) as nhs_model:
 
@@ -173,9 +200,38 @@ with pm.Model(coords=coords) as nhs_model:
 
     # DLNM
     B_prime_K = pt.as_tensor(B_prime)[K_shared]
-    theta = pm.Laplace("theta", mu=0, b=(0.25/3)/(np.sqrt(2)), shape=(M * M_prime - 1, n_covs))   
+
+    # Number of coefficients in each subspace
+    n_null = U0.shape[1]
+    n_penalized = U_plus.shape[1]
+
+    # Covariate-specific scales
+    tau_covariate = pm.Exponential("tau_covariate", scale=1, shape=n_covs)
+
+    # Unpenalized component
+    alpha = pm.Normal("alpha", mu=0, sigma=0.1, shape=(n_null, n_covs))
+
+    # Separate smoothing parameters
+    sigma_rw2_lag = 0.01
+    sigma_rw2_exposure = 0.01
+
+    # Joint precision matrix in the penalized subspace
+    K_penalized = K_lag_plus / sigma_rw2_lag**2 + K_exposure_plus / sigma_rw2_exposure**2
+
+    # Penalized component
+    eta = pm.MvNormal("eta", mu=pt.zeros(n_penalized), tau=K_penalized, shape=(n_covs, n_penalized))
+
+    # Reconstruct coefficients in constrained parameter space
+    theta = U0 @ alpha + U_plus @ eta.T
+
+    # Apply covariate-specific global shrinkage
+    theta = theta * tau_covariate[None, :]
+
+    # Transform back to original coefficient space
     gamma = pm.Deterministic("gamma", (Q @ theta).reshape((M, M_prime, n_covs)))
-    mu_covariates = pm.Deterministic("mu_covariates", pt.einsum('nm,tncp,mpc->t', B, B_prime_K, gamma))
+
+    # Evaluate DLNM
+    mu_covariates = pm.Deterministic("mu_covariates", pt.einsum("nm,tncp,mpc->t", B, B_prime_K, gamma))
 
     # Day-of-week RE
     phi_d = pm.Normal("phi_d", mu=0, sigma=0.05/3, dims="day") 
@@ -190,7 +246,7 @@ with pm.Model(coords=coords) as nhs_model:
 # Maximize likelihood of posterior before sampling
 with nhs_model:
     map_est, opt = pm.find_MAP(
-        vars=[mu0, A, phi_d, sigma_obs],
+        vars=[mu0, A, alpha, eta, phi_d, sigma_obs],
         method="L-BFGS-B",
         include_transformed=False,
         return_raw=True,
@@ -209,7 +265,7 @@ with nhs_model:
 # Save traceplots
 output_dir = os.path.join(project_root, "results", "figures", "traces")
 os.makedirs(output_dir, exist_ok=True)
-for var in ["mu0", "A", "gamma", "sigma_obs"]:
+for var in ["mu0", "A", "alpha", "tau_covariate", "gamma", "phi_d", "sigma_obs"]:
     az.plot_trace_dist(trace, var_names=[var], compact=True, combined=False, kind='kde')
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'trace-{var}.svg'))
@@ -232,7 +288,7 @@ plt.fill_between(lower.coords['date'], lower, upper, color="blue", alpha=0.15, l
 plt.plot(post_pred.coords['date'], trace.posterior["mu_seasonal"].median(dim=['chain', 'draw']), color='red', linewidth=1.5, label="Seasonal median")
 
 plt.xlabel("Date")
-plt.ylabel("ln1p(Avoidable Deaths)")
+plt.ylabel("ln(Avoidable Deaths)")
 plt.title("NHS Deaths: Model Fit (March 2023 - Sept 2025)")
 plt.legend()
 
@@ -343,9 +399,9 @@ for t in range(T):
 assert np.allclose(np.sum(AF_daily, axis=0), 1 - np.exp(-np.sum(S_ct, axis=0)), rtol=0, atol=1e-12)
 # assert np.allclose(AF_c, np.sum(AN_daily, axis = 1) / (np.sum(1 + y)), rtol=0, atol=1e-12)
 assert np.sum(AF_c) < 1
-        
 
-           
+print(AF_c) 
+
 # Plotting a walk along the lag dimension for each cov finding min risk path 
 save_dir = os.path.join(project_root, "results", "figures", "Lag-Exposure Baseline")
 os.makedirs(save_dir, exist_ok=True)
@@ -395,7 +451,7 @@ for c in range(n_covs):
     ax.legend(loc="upper right")
     plt.title(f"Surface for {X_scaled.columns[c]}")
 
-    file_name = f"Lag_Exposure_Surface_Baseline_for_{X_scaled.columns[c]}_{np.round(AF_c[c], 3)}.svg"
+    file_name = f"Lag_Exposure_Surface_Baseline_for_{X_scaled.columns[c]}.svg"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches="tight")
     plt.close()
             
@@ -443,7 +499,7 @@ for c in range(n_covs):
     ax.set_zlabel('values')
 
     plt.title(f"Surface for {X_scaled.columns[c]}")
-    file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}_{np.round(AF_c[c], 3)}.svg"
+    file_name = f"Lag_Exposure_Surface_for_{X_scaled.columns[c]}.svg"
     plt.savefig(os.path.join(save_dir, file_name), bbox_inches='tight')
     plt.close()
     
@@ -516,33 +572,33 @@ def plot_window_trajectory(train, forecast, y_df_test, dt_test, anchor_date, nul
     plt.figure(figsize=(14, 6))
 
     # Historical Training Data & Fit
-    plt.plot(dates_train[-show_n_tr:], np.expm1(train.observed_data['obs'].values[-show_n_tr:]), color="black", linewidth=2.5)
-    plt.plot(dates_train[-show_n_tr:], np.expm1(train.posterior_predictive['obs'].median(dim=['chain','draw']).values[-show_n_tr:]), color="black", linewidth=0.5)
+    plt.plot(dates_train[-show_n_tr:], np.exp(train.observed_data['obs'].values[-show_n_tr:]), color="black", linewidth=2.5)
+    plt.plot(dates_train[-show_n_tr:], np.exp(train.posterior_predictive['obs'].median(dim=['chain','draw']).values[-show_n_tr:]), color="black", linewidth=0.5)
     
     plt.fill_between(dates_train[-show_n_tr:],
-                     np.expm1(train.posterior_predictive['obs'].quantile(q=0.025, dim=['chain','draw']).values[-show_n_tr:]),
-                     np.expm1(train.posterior_predictive['obs'].quantile(q=0.975, dim=['chain','draw']).values[-show_n_tr:]),
+                     np.exp(train.posterior_predictive['obs'].quantile(q=0.025, dim=['chain','draw']).values[-show_n_tr:]),
+                     np.exp(train.posterior_predictive['obs'].quantile(q=0.975, dim=['chain','draw']).values[-show_n_tr:]),
                      color="black", alpha=0.05)
     plt.fill_between(dates_train[-show_n_tr:],
-                     np.expm1(train.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw']).values[-show_n_tr:]),
-                     np.expm1(train.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw']).values[-show_n_tr:]),
+                     np.exp(train.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw']).values[-show_n_tr:]),
+                     np.exp(train.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw']).values[-show_n_tr:]),
                      color="black", alpha=0.15)
 
     # Data Gap Connection
     gap_dates = (y_df['dt'] >= dates_train[-1]) & (y_df['dt'] <= dates_test[0])
-    plt.plot(y_df.loc[gap_dates, 'dt'], np.expm1(y_df.loc[gap_dates, 'log_y_obs']), color="blue", linewidth=2.5)
+    plt.plot(y_df.loc[gap_dates, 'dt'], np.exp(y_df.loc[gap_dates, 'log_y_obs']), color="blue", linewidth=2.5)
 
     # Out-of-Sample Test Evaluation
-    plt.plot(dates_test, np.expm1(y_df_test['log_y_obs'].values), linestyle=':', color="black", linewidth=2.5)
-    plt.plot(dates_test, np.expm1(forecast.posterior_predictive['obs'].median(dim=['chain','draw'])), color="red", linewidth=1.5)
+    plt.plot(dates_test, np.exp(y_df_test['log_y_obs'].values), linestyle=':', color="black", linewidth=2.5)
+    plt.plot(dates_test, np.exp(forecast.posterior_predictive['obs'].median(dim=['chain','draw'])), color="red", linewidth=1.5)
     
     plt.fill_between(dates_test,
-                     np.expm1(forecast.posterior_predictive['obs'].quantile(q=0.025, dim=['chain','draw'])),
-                     np.expm1(forecast.posterior_predictive['obs'].quantile(q=0.975, dim=['chain','draw'])),
+                     np.exp(forecast.posterior_predictive['obs'].quantile(q=0.025, dim=['chain','draw'])),
+                     np.exp(forecast.posterior_predictive['obs'].quantile(q=0.975, dim=['chain','draw'])),
                      color="red", alpha=0.05)
     plt.fill_between(dates_test,
-                     np.expm1(forecast.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw'])),
-                     np.expm1(forecast.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw'])),
+                     np.exp(forecast.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw'])),
+                     np.exp(forecast.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw'])),
                      color="red", alpha=0.15)
 
     # Baseline Model
@@ -623,8 +679,8 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
         for step_index in range(n_data_lag + 1, n_times):
             horizon_distance = step_index - n_data_lag - 1
             masked_lags = np.arange(n_lags) > horizon_distance
-            X_test[step_index, ~masked_lags, :] = 0.0
-            
+            X_test[step_index, ~masked_lags, :] = 0.0 # X_test[step_index, horizon_distance + 1, :]
+        
         K_test = np.digitize(X_test, bins) - 1
 
         t_val = np.asarray(t_val, dtype=np.int64)
@@ -651,7 +707,7 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
             forecast = pm.sample_posterior_predictive(trace, sample_vars=["obs"], progressbar=False)
 
         # Compute forecast MSE
-        y_pred = np.expm1(forecast["posterior_predictive/obs"].median(dim=['chain', 'draw']).sel(date=forecast_eval_dates)).values
+        y_pred = np.exp(forecast["posterior_predictive/obs"].median(dim=['chain', 'draw']).sel(date=forecast_eval_dates)).values
         
         mse_model_1_5 = (1 / 5) * np.sum((y_actual[0:5] - y_pred[0:5])**2)
         mse_model_6_10 = (1 / 5) * np.sum((y_actual[5:10] - y_pred[5:10])**2)
