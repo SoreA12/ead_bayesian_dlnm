@@ -24,6 +24,9 @@ training_end_date = datetime(2025, 9, 30)
 M = 3
 M_prime = 4
 
+retrend_x = False
+retrend_y = False
+
 # derived from settings
 last_training_data_date = training_end_date - timedelta(days=n_data_lag)
 
@@ -40,27 +43,41 @@ os.makedirs(os.path.join(project_root, "results", "figures"), exist_ok=True)
 output_dir = os.path.join(project_root, "results", "figures")
 
 df = pd.read_csv(data_path)
+hats = pd.read_csv(here("data/processed/seasonal_hats.csv"))
 
 # Select number of covariates to include
-num_covs = 30
+num_covs = 10
 assert num_covs <= df.shape[1] - 2
 df = df.iloc[:, 0 : num_covs + 2]
 
 
 # Prepare data for pyMC
 # ~~~~~~~~~~~~~~~~~~~~~
-
 # Construct outcome variable, time index, day index
 y_df = df[['operational_day']]
 y_df = y_df.rename(columns={'operational_day': 'dt'})
 y_df['dt'] = pd.to_datetime(y_df['dt'])
 y_df['t'] = np.arange(len(y_df))
 y_df['day'] = y_df['dt'].dt.day_of_week
-y_df['y_obs'] = df['estimated_avoidable_deaths']
-y_df['log_y_obs'] = np.log(y_df['y_obs'])
+#y_df['y_obs'] = df['estimated_avoidable_deaths']
+#y_df['log_y_obs'] = np.log(y_df['y_obs'])
+
+# Added logic to retrend covariates and outcome
+y_df['log_y_obs'] = df['estimated_avoidable_deaths']
+y_df['y_offset'] = hats['estimated_avoidable_deaths']
+if retrend_y:
+    y_df['log_y_obs'] = y_df['log_y_obs'] + y_df['y_offset']
+    y_df['y_offset'] = 0.0
+y_df['y_obs'] = np.exp(y_df['log_y_obs'] + y_df['y_offset'])
 
 X_scaled = df.drop(columns=['operational_day', 'estimated_avoidable_deaths'])
-X_scaled_values = X_scaled.values
+if retrend_x:
+    X_scaled = X_scaled + hats[X_scaled.columns]
+    is_train = pd.to_datetime(df['operational_day']) <= training_end_date
+    X_scaled = (X_scaled - X_scaled[is_train].mean()) / X_scaled[is_train].std()
+
+# X_scaled = df.drop(columns=['operational_day', 'estimated_avoidable_deaths'])
+# X_scaled_values = X_scaled.values
 
 lag_list = []
 for i in range(n_test+n_data_lag+1):
@@ -82,6 +99,12 @@ X_df = X_df.drop(index=bad_times, level="t")
 X_df = X_df.reset_index()
 y_df = y_df[~y_df['t'].isin(bad_times.values)]
 X_df['dt'] = X_df['t'].map(dict(zip(y_df['t'], y_df['dt'])))
+
+# Conversion helper to reflect 
+y_offset = y_df.set_index('dt')['y_offset']
+
+def to_deaths(log_vals, dates):
+    return np.exp(log_vals + y_offset.loc[np.asarray(dates)].values)
 
 # Estimate seasonal amplitude directly from the data
 mu0_est = np.median(y_df['log_y_obs'])
@@ -213,10 +236,16 @@ upper = train.posterior_predictive["obs"].quantile(q=0.975, dim=['chain', 'draw'
 
 plt.figure(figsize=(14, 6))
 
+'''
 plt.plot(y_df_train['dt'], np.exp(y_df_train['log_y_obs']), label="Data", color="black", alpha=0.6, linewidth=1)
 plt.plot(post_pred.coords['date'], np.exp(post_pred), label="Model Median", color="blue", linewidth=1.5)
 plt.fill_between(lower.coords['date'], np.exp(lower), np.exp(upper), color="blue", alpha=0.15, label="95% HDI")
 plt.plot(post_pred.coords['date'], np.exp(trace.posterior["mu_seasonal"].median(dim=['chain', 'draw'])), color='red', linewidth=1.5, label="Seasonal median")
+'''
+plt.plot(y_df_train['dt'], y_df_train['y_obs'], label="Data", color="black", alpha=0.6, linewidth=1)
+plt.plot(post_pred.coords['date'], to_deaths(post_pred, post_pred.coords['date']), label="Model Median", color="blue", linewidth=1.5)
+plt.fill_between(lower.coords['date'], to_deaths(lower, lower.coords['date']), to_deaths(upper, upper.coords['date']), color="blue", alpha=0.15, label="95% HDI")
+plt.plot(post_pred.coords['date'], to_deaths(trace.posterior["mu_seasonal"].median(dim=['chain', 'draw']), post_pred.coords['date']), color='red', linewidth=1.5, label="Seasonal median")
 
 plt.xlabel("Date")
 plt.ylabel("Avoidable Deaths (-)")
@@ -609,7 +638,8 @@ def plot_window_trajectory(train, forecast, y_df_test, dt_test, anchor_date, nul
     dates_test = forecast.posterior_predictive.coords['date'].values
 
     plt.figure(figsize=(14, 6))
-
+    
+    '''
     # Historical Training Data & Fit
     plt.plot(dates_train[-show_n_tr:], np.exp(train.observed_data['obs'].values[-show_n_tr:]), color="black", linewidth=2.5)
     plt.plot(dates_train[-show_n_tr:], np.exp(train.posterior_predictive['obs'].median(dim=['chain','draw']).values[-show_n_tr:]), color="black", linewidth=0.5)
@@ -639,6 +669,40 @@ def plot_window_trajectory(train, forecast, y_df_test, dt_test, anchor_date, nul
                      np.exp(forecast.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw'])),
                      np.exp(forecast.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw'])),
                      color="red", alpha=0.15)
+    '''
+    # Historical Training Data & Fit
+    dates_tr = dates_train[-show_n_tr:]
+    plt.plot(dates_tr, to_deaths(train.observed_data['obs'].values[-show_n_tr:], dates_tr), color="black", linewidth=2.5)
+    plt.plot(dates_tr, to_deaths(train.posterior_predictive['obs'].median(dim=['chain','draw']).values[-show_n_tr:], dates_tr), color="black", linewidth=0.5)
+    
+    plt.fill_between(dates_tr,
+                     to_deaths(train.posterior_predictive['obs'].quantile(q=0.025, dim=['chain','draw']).values[-show_n_tr:], dates_tr),
+                     to_deaths(train.posterior_predictive['obs'].quantile(q=0.975, dim=['chain','draw']).values[-show_n_tr:], dates_tr),
+                     color="black", alpha=0.05)
+    plt.fill_between(dates_tr,
+                     to_deaths(train.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw']).values[-show_n_tr:], dates_tr),
+                     to_deaths(train.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw']).values[-show_n_tr:], dates_tr),
+                     color="black", alpha=0.15)
+    
+    # Data Gap Connection
+    gap_dates = (y_df['dt'] >= dates_train[-1]) & (y_df['dt'] <= dates_test[0])
+    plt.plot(y_df.loc[gap_dates, 'dt'], y_df.loc[gap_dates, 'y_obs'], color="blue", linewidth=2.5)
+    
+    # Out-of-Sample Test Evaluation
+    plt.plot(dates_test, y_df_test['y_obs'].values, linestyle=':', color="black", linewidth=2.5)
+    plt.plot(dates_test, to_deaths(forecast.posterior_predictive['obs'].median(dim=['chain','draw']), dates_test), color="red", linewidth=1.5)
+    
+    plt.fill_between(dates_test,
+                     to_deaths(forecast.posterior_predictive['obs'].quantile(q=0.025, dim=['chain','draw']), dates_test),
+                     to_deaths(forecast.posterior_predictive['obs'].quantile(q=0.975, dim=['chain','draw']), dates_test),
+                     color="red", alpha=0.05)
+    plt.fill_between(dates_test,
+                     to_deaths(forecast.posterior_predictive['obs'].quantile(q=0.25, dim=['chain','draw']), dates_test),
+                     to_deaths(forecast.posterior_predictive['obs'].quantile(q=0.75, dim=['chain','draw']), dates_test),
+                     color="red", alpha=0.15)
+        
+    
+    
 
     # Baseline Model
     plt.plot(dates_test, null_forecast, color='green', linewidth=3)
@@ -746,7 +810,7 @@ def evaluate_forecasts(start_date, train_end, num_forecasts, horizon, train_trac
             forecast = pm.sample_posterior_predictive(trace, sample_vars=["obs"], progressbar=False)
 
         # Compute forecast MSE
-        y_pred = np.exp(forecast["posterior_predictive/obs"].median(dim=['chain', 'draw']).sel(date=forecast_eval_dates)).values
+        y_pred = to_deaths(forecast["posterior_predictive/obs"].median(dim=['chain', 'draw']).sel(date=forecast_eval_dates), forecast_eval_dates).values
         
         mse_model_1_5 = (1 / 5) * np.sum((y_actual[0:5] - y_pred[0:5])**2)
         mse_model_6_10 = (1 / 5) * np.sum((y_actual[5:10] - y_pred[5:10])**2)
