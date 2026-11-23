@@ -33,7 +33,6 @@ library(ranger)
 
 n_keep <- 10
 train_cutoff <- as.Date("2025-09-30")
-deseasonalize <- TRUE
 
 # ============================================================
 # Unzip training and validation datasets
@@ -66,8 +65,8 @@ dat1 <- dat1 %>%
 # standardize Dates and Times
 dat2 <- dat1 %>%
   mutate(dt = as.POSIXct(dt, tz = "UTC"), date_only = as.Date(dt),
-    # If recorded after midday, attribute to the next day's operational cycle
-    operational_day = if_else(format(dt, "%H:%M:%S") > "12:00:00", date_only + 1, date_only))
+         # If recorded after midday, attribute to the next day's operational cycle
+         operational_day = if_else(format(dt, "%H:%M:%S") > "12:00:00", date_only + 1, date_only))
 
 # average all timesteps to 1 day at noon
 dat3 <- dat2 %>%
@@ -118,10 +117,10 @@ registry_names <- unique(final_unique)
 # This creates the wide-format table where each column is a unique metric
 dat4 <- dat3 %>%
   
-# Combine Site and Metric name to create unique column headers
-mutate(column_label = paste0(coverage, "_", metric_name)) %>%
-select(operational_day, column_label, daily_value) %>%
-pivot_wider(names_from = column_label, values_from = daily_value)
+  # Combine Site and Metric name to create unique column headers
+  mutate(column_label = paste0(coverage, "_", metric_name)) %>%
+  select(operational_day, column_label, daily_value) %>%
+  pivot_wider(names_from = column_label, values_from = daily_value)
 
 # Ensure the dates are in chronological order
 dat4 <- dat4 %>% arrange(operational_day)
@@ -283,37 +282,64 @@ for (col in setdiff(names(dat6), skip_cols)) {
 # ============================================================
 # Deseasonalisation
 # ============================================================
-if(deseasonalize) {
-  dat6$wday <- factor(lubridate::wday(dat6$operational_day, label = TRUE, abbr = TRUE))
-  dat6$mon <- factor(lubridate::month(dat6$operational_day, label = TRUE, abbr = TRUE))
-  contrasts(dat6$wday) <- contr.sum(7)
-  contrasts(dat6$mon) <- contr.sum(12)
-  seasonal_df <- model.matrix(~ wday + mon - 1, data = dat6) %>% as.data.frame()
-  clean_names <- c(levels(dat6$wday), levels(dat6$mon)[-12])
-  colnames(seasonal_df) <- clean_names
-  dat6 <- cbind(dat6, seasonal_df)
-  seasonal_cols <- colnames(seasonal_df)
-  covar_cols <- setdiff(colnames(dat6), c("estimated_avoidable_deaths", "operational_day", "wday", "mon", seasonal_cols))
-  pre_regression <- dat6 %>% select(operational_day, all_of(covar_cols))
+dat6$wday <- factor(lubridate::wday(dat6$operational_day, label = TRUE, abbr = TRUE))
+dat6$mon <- factor(lubridate::month(dat6$operational_day, label = TRUE, abbr = TRUE))
+contrasts(dat6$wday) <- contr.sum(7)
+contrasts(dat6$mon) <- contr.sum(12)
+seasonal_df <- model.matrix(~ wday + mon - 1, data = dat6) %>% as.data.frame()
+clean_names <- c(levels(dat6$wday), levels(dat6$mon)[-12])
+colnames(seasonal_df) <- clean_names
+dat6 <- cbind(dat6, seasonal_df)
+seasonal_cols <- colnames(seasonal_df)
+covar_cols <- setdiff(colnames(dat6), c("estimated_avoidable_deaths", "operational_day", "wday", "mon", seasonal_cols))
+pre_regression <- dat6 %>% select(operational_day, all_of(covar_cols))
+
+# seasonal fits (x_hat, y_hat) kept for reseasonalisation
+hats <- data.frame(operational_day = dat6$operational_day)
+
+for(column in covar_cols) {
+  start_date <- dat6$operational_day[which(!is.na(dat6[[column]]))[1]]
   
-  for(column in covar_cols) {
-    start_date <- dat6$operational_day[which(!is.na(dat6[[column]]))[1]]
-    
-    formula_str <- paste0("`", column, "` ~ ", paste(seasonal_cols, collapse = " + "))
+  formula_str <- paste0("`", column, "` ~ ", paste(seasonal_cols, collapse = " + "))
+  model <- lm(as.formula(formula_str), data = dat6 %>% filter(operational_day >= start_date))
+  
+  na_coefs <- names(which(is.na(coef(model))))
+  if(length(na_coefs) > 0) {
+    current_seasonal_cols <- setdiff(seasonal_cols, na_coefs)
+    formula_str <- paste0("`", column, "` ~ ", paste(current_seasonal_cols, collapse = " + "))
     model <- lm(as.formula(formula_str), data = dat6 %>% filter(operational_day >= start_date))
-    
-    na_coefs <- names(which(is.na(coef(model))))
-    if(length(na_coefs) > 0) {
-      current_seasonal_cols <- setdiff(seasonal_cols, na_coefs)
-      formula_str <- paste0("`", column, "` ~ ", paste(current_seasonal_cols, collapse = " + "))
-      model <- lm(as.formula(formula_str), data = dat6 %>% filter(operational_day >= start_date))
-    }
-    
-    dat6[[column]] <- dat6[[column]] - predict(model, newdata = dat6)
   }
   
-  dat6 <- dat6 %>% select(-wday, -mon, -any_of(seasonal_cols))
+  # x_hat is 0 before the first observation, where nothing is subtracted
+  x_hat <- predict(model, newdata = dat6)
+  # x_hat[dat6$operational_day < start_date] <- 0
+  hats[[column]] <- x_hat
+  dat6[[column]] <- dat6[[column]] - x_hat
 }
+
+# outcome: log-scale fit on training rows only, predict for all rows
+is_train <- dat6$operational_day <= train_cutoff
+# every month in the data must appear in the training rows
+stopifnot(all(dat6$mon %in% dat6$mon[is_train]))
+# the log requires a strictly positive outcome
+stopifnot(all(dat6$estimated_avoidable_deaths > 0))
+
+formula_str <- paste0("log(estimated_avoidable_deaths) ~ ", paste(seasonal_cols, collapse = " + "))
+model <- lm(as.formula(formula_str), data = dat6[is_train, ])
+
+na_coefs <- names(which(is.na(coef(model))))
+if(length(na_coefs) > 0) {
+  current_seasonal_cols <- setdiff(seasonal_cols, na_coefs)
+  formula_str <- paste0("log(estimated_avoidable_deaths) ~ ", paste(current_seasonal_cols, collapse = " + "))
+  model <- lm(as.formula(formula_str), data = dat6[is_train, ])
+}
+
+# outcome becomes log(y) - y_hat, with y_hat on the log scale
+y_hat <- predict(model, newdata = dat6)
+hats$estimated_avoidable_deaths <- y_hat
+dat6$estimated_avoidable_deaths <- log(dat6$estimated_avoidable_deaths) - y_hat
+
+dat6 <- dat6 %>% select(-wday, -mon, -any_of(seasonal_cols))
 
 dat6 <- dat6 %>%
   mutate(across(all_of(covar_cols), ~ {
@@ -323,7 +349,14 @@ dat6 <- dat6 %>%
       x[1:(first_valid - 1)] <- mean(x[operational_day <= train_cutoff], na.rm = TRUE)
     }
     x
-  })) %>%
+  }))
+
+# scale x_hat to the standardized covariate units
+for (col in covar_cols) {
+  hats[[col]] <- hats[[col]] / sd(dat6[[col]][dat6$operational_day <= train_cutoff], na.rm = TRUE)
+}
+
+dat6 <- dat6 %>%
   mutate(across(all_of(covar_cols), ~ (.x - mean(.x[operational_day <= train_cutoff], na.rm = TRUE)) /
                   sd(.x[operational_day <= train_cutoff], na.rm = TRUE)))
 
@@ -331,11 +364,9 @@ dat6 <- dat6 %>%
 # GAM outlier removal (2)
 # ============================================================
 
-if(deseasonalize) {
-  skip_cols <- c("operational_day", "estimated_avoidable_deaths")
-  for (col in setdiff(names(dat6), skip_cols)) {
-    dat6[[col]] <- remove_gam_outliers_wide(dat6, col)
-  }
+skip_cols <- c("operational_day", "estimated_avoidable_deaths")
+for (col in setdiff(names(dat6), skip_cols)) {
+  dat6[[col]] <- remove_gam_outliers_wide(dat6, col)
 }
 # ============================================================
 # Cross-correlation detection
@@ -418,3 +449,7 @@ all_covariates_original <- name_map[all_covariates]
 dat6 <- dat6 %>% select(all_of(c("operational_day", "estimated_avoidable_deaths", all_covariates_original)))
 
 write.csv(dat6, here("data", "processed", "modeldat.csv"), row.names = FALSE)
+
+# seasonal fits, same columns as modeldat.csv
+hats <- hats %>% select(all_of(c("operational_day", "estimated_avoidable_deaths", all_covariates_original)))
+write.csv(hats, here("data", "processed", "seasonal_hats.csv"), row.names = FALSE)
